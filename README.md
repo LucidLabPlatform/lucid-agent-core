@@ -54,12 +54,33 @@ python main.py
 # - LWT will publish offline status when terminated
 ```
 
-## Testing the LWT
+## Testing Offline Status
 
-1. Start the agent: `python main.py`
-2. Monitor the status topic: `mosquitto_sub -t "lucid/agents/+/status" -v`
-3. Kill the agent: `Ctrl+C` or `kill <pid>`
-4. Verify the broker publishes the LWT with `state: offline`
+The agent publishes `state: offline` in two scenarios:
+
+### 1. Graceful Shutdown (Manual Publish)
+```bash
+# Start the agent
+python main.py
+
+# In another terminal, monitor status
+mosquitto_sub -t "lucid/agents/+/status" -v
+
+# Stop with Ctrl+C - agent manually publishes offline before disconnecting
+```
+
+### 2. Unexpected Disconnect (LWT Trigger)
+```bash
+# Start the agent
+python main.py
+
+# Kill it forcefully (LWT will be published by broker)
+kill -9 <pid>
+
+# Or simulate network failure, power loss, etc.
+```
+
+**Note:** LWT (Last Will and Testament) only triggers on unexpected disconnects. For graceful shutdowns, the agent manually publishes the offline status before disconnecting.
 
 ## File Structure
 

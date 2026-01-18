@@ -100,6 +100,16 @@ class AgentMQTTClient:
         """Disconnect from broker cleanly"""
         if self.client:
             logger.info("Disconnecting from broker")
+            # Publish offline status before clean disconnect
+            # (LWT only triggers on unexpected disconnect)
+            offline_payload = self._create_status_payload("offline")
+            self.client.publish(
+                self.status_topic,
+                payload=offline_payload,
+                qos=1,
+                retain=True
+            )
+            logger.info(f"Published offline status to {self.status_topic}")
             self.client.loop_stop()
             self.client.disconnect()
     
