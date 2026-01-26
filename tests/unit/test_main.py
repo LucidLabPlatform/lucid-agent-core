@@ -11,19 +11,14 @@ from unittest.mock import Mock, MagicMock, patch
 class TestMainAgent:
     """Test main agent lifecycle"""
     
-    @patch('main.ComponentManager')
     @patch('main.AgentMQTTClient')
-    def test_main_successful_startup(self, mock_mqtt_class, mock_manager_class, mock_env):
+    def test_main_successful_startup(self, mock_mqtt_class, mock_env):
         """Test successful agent startup"""
         # Mock MQTT client
         mock_mqtt_instance = MagicMock()
         mock_mqtt_instance.connect.return_value = True
         mock_mqtt_instance.is_connected.return_value = True
         mock_mqtt_class.return_value = mock_mqtt_instance
-        
-        # Mock component manager
-        mock_manager_instance = MagicMock()
-        mock_manager_class.return_value = mock_manager_instance
         
         # Import and run main (will be interrupted by our timeout)
         import main
@@ -37,11 +32,8 @@ class TestMainAgent:
             # Verify initialization sequence
             assert mock_mqtt_class.called
             mock_mqtt_instance.connect.assert_called_once()
-            assert mock_manager_class.called
-            mock_manager_instance.publish_agent_capabilities.assert_called_once()
             
             # Verify cleanup on interrupt
-            mock_manager_instance.shutdown_all.assert_called_once()
             mock_mqtt_instance.disconnect.assert_called_once()
     
     @patch('main.AgentMQTTClient')
@@ -74,52 +66,40 @@ class TestMainAgent:
             
             assert exc_info.value.code == 1
     
-    @patch('main.ComponentManager')
     @patch('main.AgentMQTTClient')
-    def test_signal_handler_sigint(self, mock_mqtt_class, mock_manager_class, mock_env):
+    def test_signal_handler_sigint(self, mock_mqtt_class, mock_env):
         """Test SIGINT signal handling"""
         mock_mqtt_instance = MagicMock()
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        mock_manager_instance = MagicMock()
-        mock_manager_class.return_value = mock_manager_instance
-        
         import main
         
-        # Set globals
+        # Set global
         main.agent = mock_mqtt_instance
-        main.component_manager = mock_manager_instance
         
         # Call signal handler
         with pytest.raises(SystemExit):
             main.signal_handler(signal.SIGINT, None)
         
         # Should shutdown gracefully
-        mock_manager_instance.shutdown_all.assert_called_once()
         mock_mqtt_instance.disconnect.assert_called_once()
     
-    @patch('main.ComponentManager')
     @patch('main.AgentMQTTClient')
-    def test_signal_handler_sigterm(self, mock_mqtt_class, mock_manager_class, mock_env):
+    def test_signal_handler_sigterm(self, mock_mqtt_class, mock_env):
         """Test SIGTERM signal handling"""
         mock_mqtt_instance = MagicMock()
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        mock_manager_instance = MagicMock()
-        mock_manager_class.return_value = mock_manager_instance
-        
         import main
         
-        # Set globals
+        # Set global
         main.agent = mock_mqtt_instance
-        main.component_manager = mock_manager_instance
         
         # Call signal handler
         with pytest.raises(SystemExit):
             main.signal_handler(signal.SIGTERM, None)
         
         # Should shutdown gracefully
-        mock_manager_instance.shutdown_all.assert_called_once()
         mock_mqtt_instance.disconnect.assert_called_once()
 
 
@@ -130,7 +110,7 @@ class TestMainHelpers:
     def test_imports(self, mock_env):
         """Test all imports work"""
         import main
-        from main import AgentMQTTClient, ComponentManager
+        from main import AgentMQTTClient
         from main import DEVICE_ID, MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION
         
         assert MQTT_HOST == 'test.mqtt.local'

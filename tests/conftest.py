@@ -19,7 +19,7 @@ def mock_env(monkeypatch):
         'AGENT_USERNAME': 'test-agent',
         'AGENT_PASSWORD': 'test-password',
         'AGENT_VERSION': '1.0.0-test',
-        'COMPONENT_REGISTRY': 'ghcr.io/test/lucid'
+        'AGENT_HEARTBEAT': '30'
     }
     
     for key, value in env_vars.items():
@@ -37,53 +37,3 @@ def mock_mqtt_client():
     return client
 
 
-@pytest.fixture
-def mock_docker():
-    """Mock Docker commands"""
-    mock = MagicMock()
-    mock.run.return_value = MagicMock(
-        returncode=0,
-        stdout="container_id_12345",
-        stderr=""
-    )
-    return mock
-
-
-@pytest.fixture
-def sample_component_config():
-    """Sample component configuration"""
-    return {
-        'component_type': 'led',
-        'component_id': 'test_led',
-        'version': '1.0.0',
-        'config': {
-            'gpio_pin': 18,
-            'simulated': True
-        }
-    }
-
-
-@pytest.fixture
-def sample_capabilities():
-    """Sample component capabilities"""
-    return [
-        {
-            'action': 'power_on',
-            'description': 'Turn LED on'
-        },
-        {
-            'action': 'power_off',
-            'description': 'Turn LED off'
-        },
-        {
-            'action': 'set_brightness',
-            'description': 'Set LED brightness',
-            'parameters': {
-                'brightness': {
-                    'type': 'integer',
-                    'min': 0,
-                    'max': 100
-                }
-            }
-        }
-    ]
