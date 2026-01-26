@@ -1,93 +1,44 @@
-# LUCID Agent Core v0 - Step 1.2
+# LUCID Agent Core
 
-**Minimal agent skeleton to prove MQTT broker + ACLs work correctly.**
+Agent that connects to an MQTT broker and manages component Docker containers.
 
-## What This Does
+---
 
-This agent does exactly three things:
+## Quick Start
 
-1. ✅ Connects to MQTT using its own identity
-2. ✅ Publishes a retained `status = online`
-3. ✅ Goes offline via LWT when killed
+1. **Prerequisites:** MQTT broker running (e.g. from lucid-infra)
 
-**No install logic. No plugins. No hot-reload. No cleverness.**
+2. **Configure:** `make setup` (creates `.env` from `env.example`) or `cp env.example .env`
+   - Set `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`
+   - Set `AGENT_VERSION`
+   - Ensure `LUCID_MODE=local`
 
-## Agent Behavior
+3. **Run:** `make dev` (requires `LUCID_MODE=local`)
 
-| Requirement | Implementation |
-|------------|----------------|
-| **Client ID** | `lucid.agent.<username>` |
-| **Username** | `<username>` (configurable) |
-| **On Connect** | Publishes (retained) to `lucid/agents/<username>/status`<br>`{"state": "online", "ts": "...", "agent_version": "0.0.0"}` |
-| **LWT** | Publishes (retained) to `lucid/agents/<username>/status`<br>`{"state": "offline", "ts": "..."}` |
+---
 
-## Installation
+## Deployment
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
-```
+**Local run:** `make dev` (Python process on host)
 
-## Configuration
+Set `LUCID_MODE=local` in `.env`. See `env.example` for configuration.
 
-**All environment variables are required.** Set them before running:
+---
 
-```bash
-export HOST="localhost"
-export PORT="1883"
-export USERNAME="mqtt-user"
-export PASSWORD="your-password"
-export VERSION="0.0.0"
-```
+## MQTT Topics
 
+**Publishes:**
+- `lucid/agents/{username}/status` — Agent status (online/offline)
 
-## Usage
+---
 
-```bash
-# Start the agent
-python main.py
+## Tests
 
-# The agent will:
-# - Connect to broker
-# - Publish online status (retained)
-# - Stay running until killed
-# - LWT will publish offline status when terminated
-```
+- Unit: `make test-unit` or `pytest -m unit -v`
+- Integration: `make test-integration` or `pytest -m "integration and not e2e" -v` (requires broker)
 
-## Testing Offline Status
+---
 
-The agent publishes `state: offline` in two scenarios:
+## Troubleshooting
 
-### 1. Graceful Shutdown (Manual Publish)
-```bash
-# Start the agent
-python main.py
-
-# In another terminal, monitor status
-mosquitto_sub -t "lucid/agents/+/status" -v
-
-# Stop with Ctrl+C - agent manually publishes offline before disconnecting
-```
-
-### 2. Unexpected Disconnect (LWT Trigger)
-```bash
-# Start the agent
-python main.py
-
-# Kill it forcefully (LWT will be published by broker)
-kill -9 <pid>
-
-# Or simulate network failure, power loss, etc.
-```
-
-**Note:** LWT (Last Will and Testament) only triggers on unexpected disconnects. For graceful shutdowns, the agent manually publishes the offline status before disconnecting.
-
-## File Structure
-
-```
-lucid-agent-core/
-├── config.py          # Device ID + broker credentials
-├── mqtt_client.py     # MQTT connection, LWT, status publishing
-├── main.py           # Entry point: start, sleep, die
-└── requirements.txt  # Dependencies (paho-mqtt only)
-```
+- **Agent does not start** — Check `.env` exists, `LUCID_MODE=local`, MQTT broker accessible
