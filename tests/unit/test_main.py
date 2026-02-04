@@ -11,7 +11,7 @@ from unittest.mock import Mock, MagicMock, patch
 class TestMainAgent:
     """Test main agent lifecycle"""
     
-    @patch('main.AgentMQTTClient')
+    @patch('lucid_agent_core.mqtt_client.AgentMQTTClient')
     def test_main_successful_startup(self, mock_mqtt_class, mock_env):
         """Test successful agent startup"""
         # Mock MQTT client
@@ -21,13 +21,14 @@ class TestMainAgent:
         mock_mqtt_class.return_value = mock_mqtt_instance
         
         # Import and run main (will be interrupted by our timeout)
-        import main
+        import lucid_agent_core.main as main
         
-        # Test with early exit via KeyboardInterrupt
-        with patch('main.time.sleep') as mock_sleep:
-            mock_sleep.side_effect = KeyboardInterrupt
-            
-            main.main()
+        # Test with early exit via KeyboardInterrupt (raise on 2nd sleep = inside main loop)
+        # Patch sys.argv so argparse doesn't see pytest's -m integration -v
+        with patch('sys.argv', ['lucid-agent-core']):
+            with patch('lucid_agent_core.main.time.sleep') as mock_sleep:
+                mock_sleep.side_effect = [None, KeyboardInterrupt]
+                main.main()
             
             # Verify initialization sequence
             assert mock_mqtt_class.called
@@ -36,21 +37,21 @@ class TestMainAgent:
             # Verify cleanup on interrupt
             mock_mqtt_instance.disconnect.assert_called_once()
     
-    @patch('main.AgentMQTTClient')
+    @patch('lucid_agent_core.mqtt_client.AgentMQTTClient')
     def test_main_connection_failure(self, mock_mqtt_class, mock_env):
         """Test agent fails to connect"""
         mock_mqtt_instance = MagicMock()
         mock_mqtt_instance.connect.return_value = False
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        import main
-        
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
-        
+        import lucid_agent_core.main as main
+
+        with patch('sys.argv', ['lucid-agent-core']):
+            with pytest.raises(SystemExit) as exc_info:
+                main.main()
         assert exc_info.value.code == 1
-    
-    @patch('main.AgentMQTTClient')
+
+    @patch('lucid_agent_core.mqtt_client.AgentMQTTClient')
     def test_main_connection_lost(self, mock_mqtt_class, mock_env):
         """Test agent connects but loses connection"""
         mock_mqtt_instance = MagicMock()
@@ -58,21 +59,21 @@ class TestMainAgent:
         mock_mqtt_instance.is_connected.return_value = False
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        import main
-        
-        with patch('main.time.sleep'):
-            with pytest.raises(SystemExit) as exc_info:
-                main.main()
-            
-            assert exc_info.value.code == 1
-    
-    @patch('main.AgentMQTTClient')
+        import lucid_agent_core.main as main
+
+        with patch('sys.argv', ['lucid-agent-core']):
+            with patch('lucid_agent_core.main.time.sleep'):
+                with pytest.raises(SystemExit) as exc_info:
+                    main.main()
+                assert exc_info.value.code == 1
+
+    @patch('lucid_agent_core.mqtt_client.AgentMQTTClient')
     def test_signal_handler_sigint(self, mock_mqtt_class, mock_env):
         """Test SIGINT signal handling"""
         mock_mqtt_instance = MagicMock()
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        import main
+        import lucid_agent_core.main as main
         
         # Set global
         main.agent = mock_mqtt_instance
@@ -84,13 +85,13 @@ class TestMainAgent:
         # Should shutdown gracefully
         mock_mqtt_instance.disconnect.assert_called_once()
     
-    @patch('main.AgentMQTTClient')
+    @patch('lucid_agent_core.mqtt_client.AgentMQTTClient')
     def test_signal_handler_sigterm(self, mock_mqtt_class, mock_env):
         """Test SIGTERM signal handling"""
         mock_mqtt_instance = MagicMock()
         mock_mqtt_class.return_value = mock_mqtt_instance
         
-        import main
+        import lucid_agent_core.main as main
         
         # Set global
         main.agent = mock_mqtt_instance
@@ -106,14 +107,15 @@ class TestMainAgent:
 @pytest.mark.unit
 class TestMainHelpers:
     """Test helper functions"""
-    
+
     def test_imports(self, mock_env):
         """Test all imports work"""
-        import main
-        from main import AgentMQTTClient
-        from main import DEVICE_ID, MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION
-        
-        assert MQTT_HOST == 'test.mqtt.local'
-        assert MQTT_PORT == 1883
-        assert AGENT_USERNAME == 'test-agent'
+        import lucid_agent_core.config as config
+        import lucid_agent_core.main as main
+        from lucid_agent_core.mqtt_client import AgentMQTTClient
+
+        config.load_config()
+        assert config.MQTT_HOST == "test.mqtt.local"
+        assert config.MQTT_PORT == 1883
+        assert config.AGENT_USERNAME == "test-agent"
 

@@ -14,7 +14,7 @@ class TestAgentMQTTClient:
     @pytest.fixture
     def mqtt_client(self, mock_env):
         """Create MQTT client instance"""
-        from mqtt_client import AgentMQTTClient
+        from lucid_agent_core.mqtt_client import AgentMQTTClient
         return AgentMQTTClient(
             device_id='test-device-123',
             host='test.mqtt.local',
@@ -54,7 +54,7 @@ class TestAgentMQTTClient:
         assert data['state'] == 'offline'
         assert 'ts' in data
     
-    @patch('mqtt_client.mqtt.Client')
+    @patch('lucid_agent_core.mqtt_client.mqtt.Client')
     def test_connect_success(self, mock_mqtt_class, mqtt_client):
         """Test successful connection"""
         mock_client_instance = MagicMock()
@@ -69,7 +69,7 @@ class TestAgentMQTTClient:
         mock_client_instance.connect.assert_called_once_with('test.mqtt.local', 1883, keepalive=60)
         mock_client_instance.loop_start.assert_called_once()
     
-    @patch('mqtt_client.mqtt.Client')
+    @patch('lucid_agent_core.mqtt_client.mqtt.Client')
     def test_connect_failure(self, mock_mqtt_class, mqtt_client):
         """Test connection failure"""
         mock_client_instance = MagicMock()
@@ -80,7 +80,7 @@ class TestAgentMQTTClient:
         
         assert result is False
     
-    @patch('mqtt_client.mqtt.Client')
+    @patch('lucid_agent_core.mqtt_client.mqtt.Client')
     def test_disconnect(self, mock_mqtt_class, mqtt_client):
         """Test disconnection"""
         mock_client_instance = MagicMock()

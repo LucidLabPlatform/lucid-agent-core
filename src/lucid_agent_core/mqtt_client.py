@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, Callable, Optional
 
 import paho.mqtt.client as mqtt
-from mqtt_topics import TopicSchema
+from lucid_agent_core.mqtt_topics import TopicSchema
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 # Agent-Core Deployment — Local Run
 
-Agent runs as a Python process directly on the host. No Docker required for the agent process itself.
+Agent runs as a Python process directly on the host.
 
 ---
 

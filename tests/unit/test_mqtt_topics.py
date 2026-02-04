@@ -2,7 +2,7 @@
 Unit tests for MQTT topic schema
 """
 import pytest
-from mqtt_topics import TopicSchema
+from lucid_agent_core.mqtt_topics import TopicSchema
 
 
 @pytest.mark.unit

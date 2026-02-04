@@ -3,13 +3,24 @@ LUCID Agent Core
 Connects to MQTT broker and publishes agent status
 """
 
+import argparse
 import logging
 import signal
 import sys
 import time
 
-from mqtt_client import AgentMQTTClient
-from config import DEVICE_ID, MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION, AGENT_HEARTBEAT
+from importlib.metadata import version as _pkg_version
+
+from lucid_agent_core import config
+from lucid_agent_core import mqtt_client
+
+
+def _get_version():
+    """Package version from pyproject.toml / setuptools-scm (git tag or fallback)."""
+    try:
+        return _pkg_version("lucid-agent-core")
+    except Exception:
+        return "0.0.0"
 
 # Configure logging
 logging.basicConfig(
@@ -33,19 +44,36 @@ def signal_handler(signum, frame):
 def main():
     """Main entry point"""
     global agent
-    
+
+    parser = argparse.ArgumentParser(
+        prog="lucid-agent-core",
+        description="LUCID Agent Core: connects to MQTT broker and publishes agent status.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
+    parser.parse_args()
+
+    config.load_config()
+
     logger.info("=" * 60)
     logger.info("LUCID Agent Core")
     logger.info("=" * 60)
-    logger.info(f"Device ID: {DEVICE_ID}")
-    logger.info(f"Username: {AGENT_USERNAME}")
-    
+    logger.info(f"Device ID: {config.DEVICE_ID}")
+    logger.info(f"Username: {config.AGENT_USERNAME}")
+
     # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # Create and connect agent
-    agent = AgentMQTTClient(DEVICE_ID, MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION, AGENT_HEARTBEAT)
+    agent = mqtt_client.AgentMQTTClient(
+        config.DEVICE_ID,
+        config.MQTT_HOST,
+        config.MQTT_PORT,
+        config.AGENT_USERNAME,
+        config.AGENT_PASSWORD,
+        config.AGENT_VERSION,
+        config.AGENT_HEARTBEAT,
+    )
     
     if not agent.connect():
         logger.error("Failed to connect to broker. Exiting.")

@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69", "setuptools_scm[toml]>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lucid-agent-core"
+dynamic = ["version"]
+description = "LUCID Phase 1 agent-core: MQTT connectivity + online/offline status (LWT + heartbeat)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+  "paho-mqtt==1.6.1",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==7.4.3",
+  "pytest-cov==4.1.0",
+  "pytest-mock==3.12.0",
+  "ruff>=0.5.0",
+]
+
+[project.scripts]
+lucid-agent-core = "lucid_agent_core.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lucid_agent_core*"]
+
+[tool.setuptools_scm]
+# version comes from git tag: v1.2.3 -> 1.2.3
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+fallback_version = "0.0.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "unit",
+  "integration",
+  "e2e",
+  "slow",
+]
