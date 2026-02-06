@@ -11,7 +11,8 @@ Agent that connects to an MQTT broker and manages hardware components.
 2. **Configure:** Set env once per machine so the installed package works from any directory:
    - **Option A:** `mkdir -p ~/.config/lucid-agent-core && cp env.example ~/.config/lucid-agent-core/.env` — then edit that file. The app loads it automatically.
    - **Option B:** In the project dir, `make setup` or `cp env.example .env` — for local dev; a `.env` in the current directory overrides the global config.
-   - Set `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`, `AGENT_VERSION`.
+   - Set `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`.
+   - Version is read from the installed `lucid-agent-core` package metadata.
 
 3. **Run from source (dev):** `make dev` (requires `LUCID_MODE=local` in your `.env`).
 

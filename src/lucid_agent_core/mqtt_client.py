@@ -19,9 +19,8 @@ logger = logging.getLogger(__name__)
 class AgentMQTTClient:
     """MQTT client for agent lifecycle"""
     
-    def __init__(self, device_id: str, host: str, port: int, 
+    def __init__(self, host: str, port: int,
                  username: str, password: str, version: str, heartbeat_interval: int = 30):
-        self.device_id = device_id
         self.host = host
         self.port = port
         self.username = username
@@ -60,7 +59,7 @@ class AgentMQTTClient:
     def _on_connect(self, client, userdata, flags, rc):
         """Callback when connection is established"""
         if rc == 0:
-            logger.info(f"Agent {self.device_id} connected to broker")
+            logger.info(f"Agent {self.username} connected to broker")
             self._publish_status("online")
         else:
             logger.error(f"Connection failed with code {rc}")
@@ -93,7 +92,7 @@ class AgentMQTTClient:
     
     def connect(self) -> bool:
         """Connect to MQTT broker with LWT configured"""
-        logger.info(f"Initializing agent: {self.device_id}")
+        logger.info(f"Initializing agent: {self.username}")
         logger.info(f"Client ID: {self.client_id}")
         logger.info(f"Broker: {self.host}:{self.port}")
         

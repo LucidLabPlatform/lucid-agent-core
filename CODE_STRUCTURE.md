@@ -61,15 +61,14 @@ lucid-agent-core/
 #### `src/config.py`
 - **Purpose**: Single source of configuration from environment variables
 - **Responsibilities**:
-  - Read required environment variables (MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION)
+  - Read required environment variables (MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD)
   - Read optional variables (AGENT_HEARTBEAT, default: 30)
-  - Generate unique DEVICE_ID (UUID)
+  - Derive agent version from installed package metadata
   - Exit with error if required variables are missing
 - **Key Variables**:
-  - `DEVICE_ID`: Unique UUID per agent instance
   - `MQTT_HOST`, `MQTT_PORT`: Broker connection
   - `AGENT_USERNAME`, `AGENT_PASSWORD`: MQTT authentication
-  - `AGENT_VERSION`: Agent version string
+  - `AGENT_VERSION`: Agent version string (from package metadata)
   - `AGENT_HEARTBEAT`: Status publish interval (seconds)
 
 #### `src/mqtt_client.py`
@@ -92,9 +91,8 @@ lucid-agent-core/
   ```json
   {
     "state": "online|offline",
-    "device_id": "<uuid>",
-    "version": "<version>",
-    "timestamp": "<iso8601>"
+    "ts": "<iso8601>",
+    "version": "<version>"
   }
   ```
 
@@ -148,7 +146,7 @@ lucid-agent-core/
   - `LUCID_MODE=local`: Deployment mode
   - `MQTT_HOST`, `MQTT_PORT`: Broker connection
   - `AGENT_USERNAME`, `AGENT_PASSWORD`: MQTT credentials
-  - `AGENT_VERSION`: Version string
+  - Version is derived from the installed `lucid-agent-core` package metadata
   - `AGENT_HEARTBEAT`: Status interval (optional, default: 30)
 
 #### `requirements.txt`
@@ -221,7 +219,7 @@ lucid-agent-core/
 
 ### Published
 - `lucid/agents/{username}/status` (retained, QoS 1)
-  - Payload: JSON with `state`, `device_id`, `version`, `timestamp`
+  - Payload: JSON with `state`, `ts`, `version`
 
 ### Subscribed
 - None (Phase 1 minimal version)

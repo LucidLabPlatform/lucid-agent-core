@@ -19,7 +19,7 @@ Agent runs as a Python process directly on the host.
 3. Configure `.env`:
    - Set `LUCID_MODE=local`
    - Set MQTT broker settings: `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`
-   - Set `AGENT_VERSION`
+   - Version is read from installed `lucid-agent-core` package metadata
 
 ---
 
@@ -39,7 +39,7 @@ make dev
 - `MQTT_PORT` — MQTT broker port (typically 1883)
 - `AGENT_USERNAME` — MQTT username for the agent
 - `AGENT_PASSWORD` — MQTT password for the agent
-- `AGENT_VERSION` — Agent version (should match `VERSION` file)
+- Version is derived from the installed `lucid-agent-core` package metadata
 
 **Optional:**
 - `AGENT_HEARTBEAT` — Heartbeat interval in seconds (default: 30)

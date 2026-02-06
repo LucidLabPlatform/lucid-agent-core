@@ -16,7 +16,6 @@ class TestAgentMQTTClient:
         """Create MQTT client instance"""
         from lucid_agent_core.mqtt_client import AgentMQTTClient
         return AgentMQTTClient(
-            device_id='test-device-123',
             host='test.mqtt.local',
             port=1883,
             username='test-agent',
@@ -26,7 +25,6 @@ class TestAgentMQTTClient:
     
     def test_init(self, mqtt_client):
         """Test client initialization"""
-        assert mqtt_client.device_id == 'test-device-123'
         assert mqtt_client.host == 'test.mqtt.local'
         assert mqtt_client.port == 1883
         assert mqtt_client.username == 'test-agent'

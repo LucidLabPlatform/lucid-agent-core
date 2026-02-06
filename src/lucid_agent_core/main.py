@@ -9,18 +9,13 @@ import signal
 import sys
 import time
 
-from importlib.metadata import version as _pkg_version
-
 from lucid_agent_core import config
 from lucid_agent_core import mqtt_client
 
 
 def _get_version():
-    """Package version from pyproject.toml / setuptools-scm (git tag or fallback)."""
-    try:
-        return _pkg_version("lucid-agent-core")
-    except Exception:
-        return "0.0.0"
+    """Package version from installed metadata (authoritative)."""
+    return config.get_package_version()
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +52,6 @@ def main():
     logger.info("=" * 60)
     logger.info("LUCID Agent Core")
     logger.info("=" * 60)
-    logger.info(f"Device ID: {config.DEVICE_ID}")
     logger.info(f"Username: {config.AGENT_USERNAME}")
 
     # Register signal handlers for graceful shutdown
@@ -66,7 +60,6 @@ def main():
 
     # Create and connect agent
     agent = mqtt_client.AgentMQTTClient(
-        config.DEVICE_ID,
         config.MQTT_HOST,
         config.MQTT_PORT,
         config.AGENT_USERNAME,

@@ -18,12 +18,14 @@ def mock_env(monkeypatch):
         'MQTT_PORT': '1883',
         'AGENT_USERNAME': 'test-agent',
         'AGENT_PASSWORD': 'test-password',
-        'AGENT_VERSION': '1.0.0-test',
         'AGENT_HEARTBEAT': '30'
     }
     
     for key, value in env_vars.items():
         monkeypatch.setenv(key, value)
+
+    import lucid_agent_core.config as config
+    monkeypatch.setattr(config, "_pkg_version", lambda name: "1.0.0-test")
     
     return env_vars
 
@@ -35,5 +37,4 @@ def mock_mqtt_client():
     client.is_connected.return_value = True
     client.publish.return_value = (0, 1)  # (rc, mid)
     return client
-
 
