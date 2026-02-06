@@ -14,6 +14,8 @@ import logging
 import signal
 import time
 from importlib.metadata import PackageNotFoundError, version as pkg_version
+from lucid_agent_core.components.loader import load_components
+from lucid_agent_core.components.context import ComponentContext
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 agent = None
+components = []
 
 
 def get_version_string() -> str:
@@ -33,7 +36,14 @@ def get_version_string() -> str:
 
 def _signal_handler(signum, frame):
     logger.info("Received signal %s, shutting down...", signum)
-    global agent
+    global agent, components
+    if components:
+        for component in components:
+            try:
+                component.stop()
+            except Exception:
+                logger.exception("Error stopping component")
+        logger.info("Components stopped")
     if agent:
         agent.disconnect()
     raise SystemExit(0)
@@ -81,12 +91,22 @@ def run_agent() -> None:
         raise SystemExit(1)
 
     logger.info("Agent is online and running. Ctrl+C to stop.")
+
+    context = ComponentContext(
+        agent_id=config.AGENT_USERNAME,
+        mqtt_client=agent,
+        config=config
+    )
+
+    global components
+    components = load_components(context)
+
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
-        agent.disconnect()
+        _signal_handler(signal.SIGINT, None)
 
 
 def build_parser() -> argparse.ArgumentParser:
