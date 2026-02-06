@@ -32,6 +32,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["lucid_agent_core*"]
 
+[tool.setuptools.package-data]
+lucid_agent_core = ["env.example"]
+
 [tool.setuptools_scm]
 # version comes from git tag: v1.2.3 -> 1.2.3
 version_scheme = "no-guess-dev"

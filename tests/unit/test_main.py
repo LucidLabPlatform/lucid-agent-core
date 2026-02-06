@@ -80,7 +80,7 @@ class TestMainAgent:
         
         # Call signal handler
         with pytest.raises(SystemExit):
-            main.signal_handler(signal.SIGINT, None)
+            main._signal_handler(signal.SIGINT, None)
         
         # Should shutdown gracefully
         mock_mqtt_instance.disconnect.assert_called_once()
@@ -98,7 +98,7 @@ class TestMainAgent:
         
         # Call signal handler
         with pytest.raises(SystemExit):
-            main.signal_handler(signal.SIGTERM, None)
+            main._signal_handler(signal.SIGTERM, None)
         
         # Should shutdown gracefully
         mock_mqtt_instance.disconnect.assert_called_once()
