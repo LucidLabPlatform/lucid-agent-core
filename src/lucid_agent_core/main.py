@@ -47,6 +47,7 @@ def run_agent() -> None:
     """
     global agent
 
+    # Lazy imports keep install-service isolated from runtime config loading.
     from lucid_agent_core.mqtt_client import AgentMQTTClient
     from lucid_agent_core import config
 
@@ -102,6 +103,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
     if args.cmd == "install-service":
+        # Install-service is intentionally isolated from runtime imports/config.
         from lucid_agent_core.installer import install_service
 
         install_service()

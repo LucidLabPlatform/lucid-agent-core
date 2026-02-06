@@ -4,12 +4,11 @@ System installer for LUCID Agent Core (systemd + venv runtime).
 Usage:
   sudo lucid-agent-core install-service
 
-Behavior:
-- Idempotent (safe to re-run)
-- Creates /etc/lucid/agent-core.env by copying env.example from package resources
-  (never overwrites if it already exists)
-- Creates a dedicated venv under /opt and runs systemd service as non-root user
-- Installs the SAME VERSION as the currently running lucid-agent-core CLI into the venv
+Contract:
+- Idempotent: safe to re-run.
+- Creates /etc/lucid/agent-core.env from packaged env.example and never overwrites it.
+- Creates /opt/lucid/agent-core/venv and installs the running CLI version into it.
+- Writes/updates the systemd unit and enables the service.
 """
 
 from __future__ import annotations
@@ -102,7 +101,7 @@ def _ensure_dirs() -> None:
 def _read_env_example_from_package() -> str:
     """
     Read env.example packaged inside lucid_agent_core.
-    Requires env.example to be located at: src/lucid_agent_core/env.example
+    The file must exist at: src/lucid_agent_core/env.example
     """
     try:
         # Python 3.9+ API. Works for wheels and editable installs.
@@ -120,7 +119,7 @@ def _read_env_example_from_package() -> str:
 def _ensure_env_file() -> None:
     """
     Create /etc/lucid/agent-core.env by copying env.example from the package.
-    NEVER overwrite if it already exists.
+    Never overwrite if it already exists.
     """
     if ENV_PATH.exists():
         return
