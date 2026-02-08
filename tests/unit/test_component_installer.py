@@ -1,6 +1,7 @@
 import pytest
 
 from lucid_agent_core.core import component_installer as installer
+from lucid_agent_core.core import restart
 
 
 @pytest.mark.unit
@@ -101,7 +102,12 @@ def test_install_component_idempotent_noop(monkeypatch):
     monkeypatch.setattr(installer, "_install_wheel", lambda *_: flags.__setitem__("pip", True))
     monkeypatch.setattr(installer, "_verify_entrypoint", lambda *_: flags.__setitem__("verify", True))
     monkeypatch.setattr(installer, "write_registry", lambda *_: flags.__setitem__("write", True))
-    monkeypatch.setattr(installer, "_restart_service", lambda *_: flags.__setitem__("restart", True))
+
+    monkeypatch.setattr(
+        restart,
+        "request_systemd_restart",
+        lambda *_: flags.__setitem__("restart", True),
+    )
 
     installer._install_component(request)
 
@@ -135,14 +141,19 @@ def test_install_component_success(monkeypatch):
     def _write(data):
         calls["write"] = data
 
-    def _restart():
+    def _request_restart(*_):
         calls["restart"] += 1
 
     monkeypatch.setattr(installer, "_download_wheel", _download)
     monkeypatch.setattr(installer, "_install_wheel", _install)
     monkeypatch.setattr(installer, "_verify_entrypoint", _verify)
     monkeypatch.setattr(installer, "write_registry", _write)
-    monkeypatch.setattr(installer, "_restart_service", _restart)
+
+    monkeypatch.setattr(
+        installer,
+        "request_systemd_restart",
+        _request_restart,
+    )
 
     installer._install_component(request)
 
@@ -161,4 +172,3 @@ def test_install_component_success(monkeypatch):
         }
     }
     assert calls["restart"] == 1
-

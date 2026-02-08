@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
+from lucid_agent_core.core.restart import request_systemd_restart
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +163,10 @@ def _install_component(request: InstallRequest) -> None:
     }
     write_registry(registry)
 
-    logger.info("Restarting service %s", SERVICE_NAME)
-    _restart_service()
-    logger.info("Component %s install completed", request.component_id)
+    # At this point install + verify + registry write succeeded.
+    # Now request a restart by terminating the process; systemd will relaunch it.
+    request_systemd_restart(f"installed/updated component {request.component_id}")
+    # Do not log "completed" after this; process will exit.
 
 
 def _download_wheel(wheel_url: str, wheel_path: Path) -> None:
@@ -193,16 +195,6 @@ def _verify_entrypoint(entrypoint: str) -> None:
     module_name, class_name = entrypoint.split(":", 1)
     module = importlib.import_module(module_name)
     getattr(module, class_name)
-
-
-def _restart_service() -> None:
-    subprocess.run(
-        ["systemctl", "restart", SERVICE_NAME],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
