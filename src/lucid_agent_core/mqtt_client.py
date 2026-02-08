@@ -8,9 +8,10 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Dict, Callable, Optional
+from typing import Optional
 
 import paho.mqtt.client as mqtt
+from lucid_agent_core.core.component_installer import handle_install_component
 from lucid_agent_core.mqtt_topics import TopicSchema
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ class AgentMQTTClient:
         self.client_id = f"lucid.agent.{self.username}"
         self.base_topic = f"lucid/agents/{self.username}"
         self.status_topic = self.topics.status()
+        self.install_component_topic = (
+            f"lucid/agents/{self.username}/cmd/core/install_component"
+        )
         
         # MQTT client
         self.client = None
@@ -60,6 +64,11 @@ class AgentMQTTClient:
         """Callback when connection is established"""
         if rc == 0:
             logger.info(f"Agent {self.username} connected to broker")
+            client.subscribe(self.install_component_topic, qos=1)
+            logger.info(
+                "Subscribed to core install topic: %s",
+                self.install_component_topic,
+            )
             self._publish_status("online")
         else:
             logger.error(f"Connection failed with code {rc}")
@@ -76,8 +85,21 @@ class AgentMQTTClient:
     
     def _on_message(self, client, userdata, msg):
         """Callback when a message is received"""
-        # No message handling for minimal agent-only version
-        pass
+        if msg.topic == self.install_component_topic:
+            try:
+                payload = msg.payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                logger.error("Failed to decode install_component payload: %s", exc)
+                return
+
+            thread = threading.Thread(
+                target=handle_install_component,
+                args=(payload,),
+                daemon=True,
+                name="InstallComponentCommand",
+            )
+            thread.start()
+            return
     
     def _publish_status(self, state: str):
         """Publish agent status"""
@@ -116,6 +138,7 @@ class AgentMQTTClient:
             # Set callbacks
             self.client.on_connect = self._on_connect
             self.client.on_disconnect = self._on_disconnect
+            self.client.on_message = self._on_message
             
             # Connect to broker
             self.client.connect(self.host, self.port, keepalive=60)

@@ -32,6 +32,10 @@ class TestAgentMQTTClient:
         assert mqtt_client.version == '1.0.0'
         assert mqtt_client.client_id == 'lucid.agent.test-agent'
         assert mqtt_client.status_topic == 'lucid/agents/test-agent/status'
+        assert (
+            mqtt_client.install_component_topic
+            == 'lucid/agents/test-agent/cmd/core/install_component'
+        )
     
     def test_create_status_payload_online(self, mqtt_client):
         """Test online status payload creation"""
@@ -142,8 +146,35 @@ class TestAgentMQTTClient:
         
         mqtt_client._on_connect(mock_client, None, None, 0)
         
+        mock_client.subscribe.assert_called_once_with(
+            mqtt_client.install_component_topic, qos=1
+        )
         # Should publish online status
         assert mock_client.publish.called
+
+    @patch('lucid_agent_core.mqtt_client.threading.Thread')
+    @patch('lucid_agent_core.mqtt_client.handle_install_component')
+    def test_on_message_install_component_spawns_thread(
+        self, mock_install_handler, mock_thread_cls, mqtt_client
+    ):
+        thread_instance = MagicMock()
+        mock_thread_cls.return_value = thread_instance
+
+        payload = '{"component_id":"led_strip"}'
+        msg = MagicMock()
+        msg.topic = mqtt_client.install_component_topic
+        msg.payload = payload.encode('utf-8')
+
+        mqtt_client._on_message(None, None, msg)
+
+        mock_thread_cls.assert_called_once_with(
+            target=mock_install_handler,
+            args=(payload,),
+            daemon=True,
+            name='InstallComponentCommand',
+        )
+        thread_instance.start.assert_called_once()
+        mock_install_handler.assert_not_called()
     
     def test_on_disconnect_callback(self, mqtt_client):
         """Test on_disconnect callback"""

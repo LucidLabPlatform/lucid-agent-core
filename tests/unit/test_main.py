@@ -28,7 +28,9 @@ class TestMainAgent:
         with patch('sys.argv', ['lucid-agent-core']):
             with patch('lucid_agent_core.main.time.sleep') as mock_sleep:
                 mock_sleep.side_effect = [None, KeyboardInterrupt]
-                main.main()
+                with pytest.raises(SystemExit) as exc_info:
+                    main.main()
+                assert exc_info.value.code == 0
             
             # Verify initialization sequence
             assert mock_mqtt_class.called
@@ -118,4 +120,3 @@ class TestMainHelpers:
         assert config.MQTT_HOST == "test.mqtt.local"
         assert config.MQTT_PORT == 1883
         assert config.AGENT_USERNAME == "test-agent"
-
