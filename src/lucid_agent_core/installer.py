@@ -71,8 +71,17 @@ def _require_python311() -> None:
 
 
 def _ensure_user() -> None:
+    """
+    Ensure the system user exists with a real home directory.
+    This user is allowed to login (has a real shell).
+    """
+    home = Path(f"/home/{SYSTEM_USER}")
+
     res = subprocess.run(["id", "-u", SYSTEM_USER], capture_output=True)
     if res.returncode == 0:
+        # User exists: ensure home exists and is owned correctly (covers older installs)
+        home.mkdir(parents=True, exist_ok=True)
+        _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home)])
         return
 
     if shutil.which("useradd") is None:
@@ -82,25 +91,53 @@ def _ensure_user() -> None:
         [
             "useradd",
             "--system",
-            "--no-create-home",
+            "--create-home",
+            "--home-dir",
+            str(home),
             "--shell",
-            "/usr/sbin/nologin",
+            "/bin/bash",  # login-enabled
             SYSTEM_USER,
         ]
     )
 
+    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home)])
+
+
 def _run_as_lucid(cmd: list[str]) -> None:
-    subprocess.run(
-        ["runuser", "-u", SYSTEM_USER, "--", *cmd],
-        check=True,
-        env={"HOME": f"/home/{SYSTEM_USER}"},
-    )
+    """
+    Run a command as SYSTEM_USER with a sane environment.
+    Portable fallback chain: runuser -> sudo -> su
+    """
+    env = {
+        "HOME": f"/home/{SYSTEM_USER}",
+        "USER": SYSTEM_USER,
+        "LOGNAME": SYSTEM_USER,
+        "PATH": os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"),
+    }
+
+    if shutil.which("runuser"):
+        subprocess.run(["runuser", "-u", SYSTEM_USER, "--", *cmd], check=True, env=env)
+        return
+
+    if shutil.which("sudo"):
+        subprocess.run(["sudo", "-u", SYSTEM_USER, "--", *cmd], check=True, env=env)
+        return
+
+    if shutil.which("su"):
+        # su expects a single string command
+        cmd_str = " ".join(subprocess.list2cmdline([c]) for c in cmd)
+        subprocess.run(["su", "-s", "/bin/sh", SYSTEM_USER, "-c", cmd_str], check=True, env=env)
+        return
+
+    raise SystemExit("Neither runuser, sudo, nor su is available; cannot run commands as lucid.")
 
 
 def _ensure_dirs() -> None:
+    # Create directories
     for p in (ENV_DIR, OPT_DIR, VAR_LIB, VAR_LOG):
         p.mkdir(parents=True, exist_ok=True)
 
+    # LUCID runtime dirs owned by lucid
     _run(
         [
             "chown",
@@ -112,13 +149,16 @@ def _ensure_dirs() -> None:
         ]
     )
 
+    # Keep config dir root-owned
+    _run(["chown", "root:root", str(ENV_DIR)])
+
+
 def _read_env_example_from_package() -> str:
     """
     Read env.example packaged inside lucid_agent_core.
     The file must exist at: src/lucid_agent_core/env.example
     """
     try:
-        # Python 3.9+ API. Works for wheels and editable installs.
         env_example = resources.files("lucid_agent_core").joinpath("env.example")
         return env_example.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -140,6 +180,9 @@ def _ensure_env_file() -> None:
 
     content = _read_env_example_from_package()
     ENV_PATH.write_text(content, encoding="utf-8")
+
+    # systemd reads this as root; 600 is fine
+    _run(["chown", "root:root", str(ENV_PATH)])
     _run(["chmod", "600", str(ENV_PATH)])
 
 
@@ -151,12 +194,12 @@ def _ensure_venv() -> None:
 
     _run_as_lucid([str(VENV_DIR / "bin" / "pip"), "install", "--upgrade", "pip"])
 
+
 def _current_version() -> str:
     return pkg_version("lucid-agent-core")
 
 
 def _wheel_filename(version: str) -> str:
-    # Your GitHub release uses underscore naming
     return f"lucid_agent_core-{version}-py3-none-any.whl"
 
 
@@ -183,6 +226,10 @@ def _write_unit_file() -> None:
         User={SYSTEM_USER}
         Group={SYSTEM_USER}
         EnvironmentFile={ENV_PATH}
+
+        # Runtime HOME should not rely on /home with ProtectHome=true
+        Environment=HOME={VAR_LIB}
+
         ExecStart={VENV_DIR}/bin/lucid-agent-core
         WorkingDirectory={VAR_LIB}
         Restart=always
@@ -199,7 +246,6 @@ def _write_unit_file() -> None:
         """
     )
 
-    # Unit file is code; overwrite is OK. Avoid rewriting if unchanged.
     if UNIT_PATH.exists() and UNIT_PATH.read_text(encoding="utf-8") == unit:
         return
 
