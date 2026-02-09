@@ -173,23 +173,29 @@ def _download_wheel(wheel_url: str, wheel_path: Path) -> None:
     with urlopen(wheel_url) as response, wheel_path.open("wb") as output_file:
         shutil.copyfileobj(response, output_file)
 
-
 def _install_wheel(wheel_path: Path) -> None:
     if not PIP_PATH.exists():
         raise FileNotFoundError(f"pip executable not found: {PIP_PATH}")
 
-    completed = subprocess.run(
-        [str(PIP_PATH), "install", "--upgrade", str(wheel_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            [str(PIP_PATH), "install", "--upgrade", str(wheel_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error("pip install failed (rc=%s)", e.returncode)
+        if e.stdout:
+            logger.error("pip stdout:\n%s", e.stdout.strip())
+        if e.stderr:
+            logger.error("pip stderr:\n%s", e.stderr.strip())
+        raise
 
     if completed.stdout:
         logger.info("pip install stdout: %s", completed.stdout.strip())
     if completed.stderr:
         logger.info("pip install stderr: %s", completed.stderr.strip())
-
 
 def _verify_entrypoint(entrypoint: str) -> None:
     module_name, class_name = entrypoint.split(":", 1)

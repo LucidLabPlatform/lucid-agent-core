@@ -72,16 +72,23 @@ def _require_python311() -> None:
 
 def _ensure_user() -> None:
     """
-    Ensure the system user exists with a real home directory.
-    This user is allowed to login (has a real shell).
+    Ensure the system user exists with a real home directory and a login shell.
+    Idempotent: safe to re-run even if lucid already exists from older installs.
     """
     home = Path(f"/home/{SYSTEM_USER}")
+    desired_shell = "/bin/bash"
 
     res = subprocess.run(["id", "-u", SYSTEM_USER], capture_output=True)
     if res.returncode == 0:
-        # User exists: ensure home exists and is owned correctly (covers older installs)
+        # Ensure home exists and is owned correctly
         home.mkdir(parents=True, exist_ok=True)
         _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home)])
+
+        # Upgrade older installs that used /usr/sbin/nologin or wrong home
+        if shutil.which("usermod") is None:
+            raise SystemExit("usermod not found; cannot update existing user's shell/home.")
+
+        _run(["usermod", "-d", str(home), "-s", desired_shell, SYSTEM_USER])
         return
 
     if shutil.which("useradd") is None:
@@ -95,14 +102,12 @@ def _ensure_user() -> None:
             "--home-dir",
             str(home),
             "--shell",
-            "/bin/bash",  # login-enabled
+            desired_shell,  # login-enabled
             SYSTEM_USER,
         ]
     )
 
     _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home)])
-
-
 def _run_as_lucid(cmd: list[str]) -> None:
     """
     Run a command as SYSTEM_USER with a sane environment.
