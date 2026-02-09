@@ -244,7 +244,7 @@ def _write_unit_file() -> None:
         PrivateTmp=true
         ProtectSystem=strict
         ProtectHome=true
-        ReadWritePaths={VAR_LIB} {VAR_LOG}
+        ReadWritePaths={VAR_LIB} {VAR_LOG} {VENV_DIR}
 
         [Install]
         WantedBy=multi-user.target
