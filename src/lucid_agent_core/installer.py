@@ -89,14 +89,28 @@ def _ensure_user() -> None:
         ]
     )
 
+def _run_as_lucid(cmd: list[str]) -> None:
+    subprocess.run(
+        ["runuser", "-u", SYSTEM_USER, "--", *cmd],
+        check=True,
+        env={"HOME": f"/home/{SYSTEM_USER}"},
+    )
+
 
 def _ensure_dirs() -> None:
     for p in (ENV_DIR, OPT_DIR, VAR_LIB, VAR_LOG):
         p.mkdir(parents=True, exist_ok=True)
 
-    # Only chown runtime dirs
-    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(VAR_LIB), str(VAR_LOG)])
-
+    _run(
+        [
+            "chown",
+            "-R",
+            f"{SYSTEM_USER}:{SYSTEM_USER}",
+            str(OPT_DIR),
+            str(VAR_LIB),
+            str(VAR_LOG),
+        ]
+    )
 
 def _read_env_example_from_package() -> str:
     """
@@ -130,11 +144,12 @@ def _ensure_env_file() -> None:
 
 
 def _ensure_venv() -> None:
-    if not (VENV_DIR / "bin" / "python").exists():
-        _run([str(PYTHON_311), "-m", "venv", str(VENV_DIR)])
+    python = VENV_DIR / "bin" / "python"
 
-    _run([str(VENV_DIR / "bin" / "pip"), "install", "--upgrade", "pip"])
+    if not python.exists():
+        _run_as_lucid([str(PYTHON_311), "-m", "venv", str(VENV_DIR)])
 
+    _run_as_lucid([str(VENV_DIR / "bin" / "pip"), "install", "--upgrade", "pip"])
 
 def _current_version() -> str:
     return pkg_version("lucid-agent-core")
@@ -152,7 +167,7 @@ def _release_wheel_url(version: str) -> str:
 
 def _install_wheel_into_venv(wheel_url: str) -> None:
     pip = str(VENV_DIR / "bin" / "pip")
-    _run([pip, "install", "--upgrade", wheel_url])
+    _run_as_lucid([pip, "install", "--upgrade", wheel_url])
 
 
 def _write_unit_file() -> None:
