@@ -1,72 +1,118 @@
 """
-Agent Core Configuration
+Agent Core configuration.
 
-Single source for agent runtime configuration. All values are read from
-environment variables. .env files are loaded automatically so you don't need
-to export variables. Set them once per machine in a standard location.
+Single source for runtime configuration. Values come from environment variables,
+optionally loaded from standard env files.
+
+Priority (lowest -> highest):
+1) /etc/lucid/agent-core.env (system install)
+2) ~/.config/lucid-agent-core/.env (user install)
+3) ./.env (project override)
+4) process environment variables (always win)
 """
+
+from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
-
-_DEFAULTS = {"AGENT_HEARTBEAT": "30"}
-
-
-def _config_dirs():
-    """Yield paths to search for .env (first = lowest priority, later overrides)."""
-    # 1) User config dir: set once per machine, works from any cwd
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    yield os.path.join(base, "lucid-agent-core", ".env")
-    # 2) Current directory (e.g. project .env overrides)
-    yield ".env"
-
-# local | test — selects run context; used by Makefile and optionally by app
-LUCID_MODE = os.getenv("LUCID_MODE", "local")
-
-# Populated by load_config(); do not use before calling load_config()
-MQTT_HOST = None
-MQTT_PORT = None
-AGENT_USERNAME = None
-AGENT_PASSWORD = None
-AGENT_VERSION = None
-AGENT_HEARTBEAT = None
+from pathlib import Path
+from typing import Iterable, Optional
 
 
-def get_required_env(key):
-    """Get required environment variable or exit"""
-    value = os.getenv(key)
-    if value is None:
-        print(f"ERROR: Required environment variable '{key}' is not set")
-        sys.exit(1)
-    return value
+class ConfigError(ValueError):
+    """Raised when configuration is missing or invalid."""
 
 
-def get_package_version():
-    """Get the installed package version (authoritative)."""
+def _package_version() -> str:
     try:
         return _pkg_version("lucid-agent-core")
     except PackageNotFoundError:
-        print("ERROR: Could not determine lucid-agent-core version from package metadata")
-        sys.exit(1)
+        return "0.0.0+dev"
 
 
-def load_config():
-    """Load config from .env (if present) and environment. Call before using MQTT_* etc."""
-    global MQTT_HOST, MQTT_PORT, AGENT_USERNAME, AGENT_PASSWORD, AGENT_VERSION, AGENT_HEARTBEAT
+def _env_paths() -> Iterable[Path]:
+    # 1) system install
+    yield Path("/etc/lucid/agent-core.env")
 
-    from dotenv import load_dotenv
-    for path in _config_dirs():
-        if os.path.isfile(path):
-            load_dotenv(path)
-    load_dotenv()  # cwd .env last so it overrides (e.g. when in project dir)
+    # 2) user config dir
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", str(Path.home())))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    yield base / "lucid-agent-core" / ".env"
 
-    MQTT_HOST = get_required_env("MQTT_HOST")
-    MQTT_PORT = int(get_required_env("MQTT_PORT"))
-    AGENT_USERNAME = get_required_env("AGENT_USERNAME")
-    AGENT_PASSWORD = get_required_env("AGENT_PASSWORD")
-    AGENT_VERSION = get_package_version()
-    AGENT_HEARTBEAT = int(os.getenv("AGENT_HEARTBEAT", _DEFAULTS["AGENT_HEARTBEAT"]))
+    # 3) project override
+    yield Path(".env")
+
+
+def _require_env(key: str) -> str:
+    v = os.getenv(key)
+    if v is None or v == "":
+        raise ConfigError(f"Missing required environment variable: {key}")
+    return v
+
+
+def _parse_int(key: str, raw: str) -> int:
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid integer for {key}: {raw!r}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class AgentConfig:
+    mqtt_host: str
+    mqtt_port: int
+    agent_username: str
+    agent_password: str
+    agent_version: str
+    agent_heartbeat_s: int  # 0 disables periodic refresh
+
+
+def load_config(*, dotenv_enabled: bool = True) -> AgentConfig:
+    """
+    Load config by reading env files (if python-dotenv is installed) and then
+    validating required environment variables.
+
+    Returns an immutable AgentConfig. Raises ConfigError on failure.
+    """
+    if dotenv_enabled:
+        try:
+            from dotenv import load_dotenv  # type: ignore
+        except Exception:
+            load_dotenv = None  # type: ignore
+
+        if load_dotenv is not None:
+            for p in _env_paths():
+                if p.is_file():
+                    # do not override existing env vars; later files can fill missing
+                    load_dotenv(p, override=False)
+
+            # final pass: allow local .env to override explicitly if desired
+            # (but keep process env highest priority anyway)
+            if Path(".env").is_file():
+                load_dotenv(Path(".env"), override=True)
+
+    mqtt_host = _require_env("MQTT_HOST")
+    mqtt_port = _parse_int("MQTT_PORT", _require_env("MQTT_PORT"))
+    if not (1 <= mqtt_port <= 65535):
+        raise ConfigError(f"MQTT_PORT out of range: {mqtt_port}")
+
+    agent_username = _require_env("AGENT_USERNAME")
+    agent_password = _require_env("AGENT_PASSWORD")
+
+    heartbeat_raw = os.getenv("AGENT_HEARTBEAT", "0")
+    heartbeat_s = _parse_int("AGENT_HEARTBEAT", heartbeat_raw)
+    if heartbeat_s < 0:
+        raise ConfigError("AGENT_HEARTBEAT must be >= 0 (0 disables)")
+
+    return AgentConfig(
+        mqtt_host=mqtt_host,
+        mqtt_port=mqtt_port,
+        agent_username=agent_username,
+        agent_password=agent_password,
+        agent_version=_package_version(),
+        agent_heartbeat_s=heartbeat_s,
+    )

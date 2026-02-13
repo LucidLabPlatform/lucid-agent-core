@@ -1,174 +1,156 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
-from lucid_agent_core.core import component_installer as installer
-from lucid_agent_core.core import restart
+import lucid_agent_core.core.component_installer as ci
 
 
-@pytest.mark.unit
-def test_parse_and_validate_success():
-    request = installer._parse_and_validate(
-        """
-        {
-          "component_id": "led_strip",
-          "repo": "LucidLabPlatform/lucid-agent-led",
-          "version": "0.1.0",
-          "entrypoint": "lucid_agent_led.component:LedStripComponent",
-          "mode": "restart"
-        }
-        """
-    )
-
-    assert request.component_id == "led_strip"
-    assert request.package_name == "lucid_agent_led_strip"
-    assert request.wheel_filename == "lucid_agent_led_strip-0.1.0-py3-none-any.whl"
-    assert (
-        request.wheel_url
-        == "https://github.com/LucidLabPlatform/lucid-agent-led/releases/download/"
-        "v0.1.0/lucid_agent_led_strip-0.1.0-py3-none-any.whl"
-    )
-
-
-@pytest.mark.unit
-def test_parse_and_validate_rejects_invalid_mode():
-    with pytest.raises(installer.ValidationError):
-        installer._parse_and_validate(
-            """
-            {
-              "component_id": "led_strip",
-              "repo": "LucidLabPlatform/lucid-agent-led",
-              "version": "0.1.0",
-              "entrypoint": "lucid_agent_led.component:LedStripComponent",
-              "mode": "hotload"
-            }
-            """
-        )
-
-
-@pytest.mark.unit
-def test_parse_and_validate_rejects_extra_keys():
-    with pytest.raises(installer.ValidationError):
-        installer._parse_and_validate(
-            """
-            {
-              "component_id": "led_strip",
-              "repo": "LucidLabPlatform/lucid-agent-led",
-              "version": "0.1.0",
-              "entrypoint": "lucid_agent_led.component:LedStripComponent",
-              "mode": "restart",
-              "wheel_url": "https://example.com/file.whl"
-            }
-            """
-        )
-
-
-@pytest.mark.unit
-def test_handle_install_component_rejects_bad_payload(monkeypatch):
-    called = {"install": False}
-
-    def _install(_request):
-        called["install"] = True
-
-    monkeypatch.setattr(installer, "_install_component", _install)
-
-    installer.handle_install_component('{"component_id":"bad"}')
-
-    assert called["install"] is False
-
-
-@pytest.mark.unit
-def test_install_component_idempotent_noop(monkeypatch):
-    request = installer.InstallRequest(
-        component_id="led_strip",
-        repo="LucidLabPlatform/lucid-agent-led",
-        version="0.1.0",
-        entrypoint="lucid_agent_led.component:LedStripComponent",
-        mode="restart",
-    )
-
-    monkeypatch.setattr(
-        installer,
-        "load_registry",
-        lambda: {
-            "led_strip": {
-                "repo": "LucidLabPlatform/lucid-agent-led",
-                "version": "0.1.0",
-                "entrypoint": "lucid_agent_led.component:LedStripComponent",
-            }
+def valid_payload(**overrides):
+    base = {
+        "request_id": "req-1",
+        "component_id": "cpu",
+        "version": "1.2.3",
+        "entrypoint": "some.module:CPU",
+        "source": {
+            "type": "github_release",
+            "owner": "LucidLabPlatform",
+            "repo": "lucid-agent-cpu",
+            "tag": "v1.2.3",
+            "asset": "lucid_agent_cpu-1.2.3-py3-none-any.whl",
+            "sha256": "a" * 64,
         },
-    )
-
-    flags = {"download": False, "pip": False, "verify": False, "write": False, "restart": False}
-    monkeypatch.setattr(installer, "_download_wheel", lambda *_: flags.__setitem__("download", True))
-    monkeypatch.setattr(installer, "_install_wheel", lambda *_: flags.__setitem__("pip", True))
-    monkeypatch.setattr(installer, "_verify_entrypoint", lambda *_: flags.__setitem__("verify", True))
-    monkeypatch.setattr(installer, "write_registry", lambda *_: flags.__setitem__("write", True))
-
-    monkeypatch.setattr(
-        restart,
-        "request_systemd_restart",
-        lambda *_: flags.__setitem__("restart", True),
-    )
-
-    installer._install_component(request)
-
-    assert flags == {"download": False, "pip": False, "verify": False, "write": False, "restart": False}
-
-
-@pytest.mark.unit
-def test_install_component_success(monkeypatch):
-    request = installer.InstallRequest(
-        component_id="led_strip",
-        repo="LucidLabPlatform/lucid-agent-led",
-        version="0.1.0",
-        entrypoint="lucid_agent_led.component:LedStripComponent",
-        mode="restart",
-    )
-
-    monkeypatch.setattr(installer, "load_registry", lambda: {})
-    monkeypatch.setattr(installer, "_utc_now", lambda: "2026-02-06T16:30:00Z")
-
-    calls = {"download": None, "install": None, "verify": None, "write": None, "restart": 0}
-
-    def _download(url, path):
-        calls["download"] = (url, path)
-
-    def _install(path):
-        calls["install"] = path
-
-    def _verify(entrypoint):
-        calls["verify"] = entrypoint
-
-    def _write(data):
-        calls["write"] = data
-
-    def _request_restart(*_):
-        calls["restart"] += 1
-
-    monkeypatch.setattr(installer, "_download_wheel", _download)
-    monkeypatch.setattr(installer, "_install_wheel", _install)
-    monkeypatch.setattr(installer, "_verify_entrypoint", _verify)
-    monkeypatch.setattr(installer, "write_registry", _write)
-
-    monkeypatch.setattr(
-        installer,
-        "request_systemd_restart",
-        _request_restart,
-    )
-
-    installer._install_component(request)
-
-    assert calls["download"] is not None
-    assert calls["download"][0] == request.wheel_url
-    assert str(calls["download"][1]).endswith(request.wheel_filename)
-    assert calls["install"] == calls["download"][1]
-    assert calls["verify"] == request.entrypoint
-    assert calls["write"] == {
-        "led_strip": {
-            "repo": "LucidLabPlatform/lucid-agent-led",
-            "version": "0.1.0",
-            "wheel_url": request.wheel_url,
-            "entrypoint": "lucid_agent_led.component:LedStripComponent",
-            "installed_at": "2026-02-06T16:30:00Z",
-        }
     }
-    assert calls["restart"] == 1
+    base.update(overrides)
+    return json.dumps(base)
+
+
+def test_validation_missing_keys_returns_error(monkeypatch):
+    payload = json.dumps({"foo": "bar"})
+
+    res = ci.handle_install_component(payload)
+
+    assert res.ok is False
+    assert "validation_error" in (res.error or "")
+
+
+def test_validation_bad_sha_rejected(monkeypatch):
+    p = json.loads(valid_payload())
+    p["source"]["sha256"] = "not-a-sha"
+    res = ci.handle_install_component(json.dumps(p))
+
+    assert res.ok is False
+    assert "validation_error" in (res.error or "")
+
+
+def test_idempotent_install_skips_work(monkeypatch):
+    # registry indicates same install already applied
+    monkeypatch.setattr(ci, "load_registry", lambda: {"cpu": {"repo": "LucidLabPlatform/lucid-agent-cpu", "version": "1.2.3", "entrypoint": "some.module:CPU"}})
+    monkeypatch.setattr(ci, "is_same_install", lambda existing, repo, version, entrypoint: True)
+
+    download = MagicMock()
+    monkeypatch.setattr(ci, "_download_with_limits", download)
+
+    pip = MagicMock()
+    monkeypatch.setattr(ci, "_pip_install", pip)
+
+    verify_ep = MagicMock()
+    monkeypatch.setattr(ci, "_verify_entrypoint", verify_ep)
+
+    write = MagicMock()
+    monkeypatch.setattr(ci, "write_registry", write)
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is True
+    assert res.restart_required is False
+
+    download.assert_not_called()
+    pip.assert_not_called()
+    verify_ep.assert_not_called()
+    write.assert_not_called()
+
+
+def test_sha_mismatch_fails_before_pip(monkeypatch, tmp_path):
+    # Force download to write a file, then sha check fails
+    def fake_download(url, out_path: Path, *, timeout_s: int, max_bytes: int):
+        out_path.write_bytes(b"wheel-bytes")
+
+    monkeypatch.setattr(ci, "_download_with_limits", fake_download)
+
+    def fake_verify_sha(path: Path, *, expected: str):
+        raise RuntimeError("sha256 mismatch: expected=... got=...")
+
+    monkeypatch.setattr(ci, "_verify_sha256", fake_verify_sha)
+
+    pip = MagicMock()
+    monkeypatch.setattr(ci, "_pip_install", pip)
+
+    monkeypatch.setattr(ci, "load_registry", lambda: {})
+    monkeypatch.setattr(ci, "write_registry", MagicMock())
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is False
+    assert "sha256 mismatch" in (res.error or "")
+    pip.assert_not_called()
+
+
+def test_pip_failure_returns_error_and_no_registry_write(monkeypatch):
+    monkeypatch.setattr(ci, "load_registry", lambda: {})
+    write = MagicMock()
+    monkeypatch.setattr(ci, "write_registry", write)
+
+    # download + sha OK
+    monkeypatch.setattr(ci, "_download_with_limits", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
+
+    # pip fails
+    def fake_pip_install(path: Path):
+        raise RuntimeError("pip install failed rc=1\nstdout:\n...\nstderr:\nboom")
+
+    monkeypatch.setattr(ci, "_pip_install", fake_pip_install)
+
+    # entrypoint won't be checked if pip fails
+    verify_ep = MagicMock()
+    monkeypatch.setattr(ci, "_verify_entrypoint", verify_ep)
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is False
+    assert "pip install failed" in (res.error or "")
+    assert res.restart_required is False
+
+    verify_ep.assert_not_called()
+    write.assert_not_called()
+
+
+def test_success_updates_registry_and_requests_restart(monkeypatch):
+    monkeypatch.setattr(ci, "load_registry", lambda: {})
+    written = {}
+
+    def fake_write(reg):
+        written.update(reg)
+
+    monkeypatch.setattr(ci, "write_registry", fake_write)
+
+    monkeypatch.setattr(ci, "_download_with_limits", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "_pip_install", lambda *a, **k: ("ok", ""))
+    monkeypatch.setattr(ci, "_verify_entrypoint", lambda *a, **k: None)
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is True
+    assert res.restart_required is True
+    assert "cpu" in written
+
+    cpu = written["cpu"]
+    assert cpu["version"] == "1.2.3"
+    assert cpu["entrypoint"] == "some.module:CPU"
+    assert cpu["sha256"] == ("a" * 64)
+    assert cpu["repo"] == "LucidLabPlatform/lucid-agent-cpu"
+    assert cpu["source"]["type"] == "github_release"
+    assert cpu["source"]["tag"] == "v1.2.3"
