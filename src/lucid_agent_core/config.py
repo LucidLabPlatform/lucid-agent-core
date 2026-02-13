@@ -86,14 +86,24 @@ def load_config(*, dotenv_enabled: bool = True) -> AgentConfig:
 
         if load_dotenv is not None:
             for p in _env_paths():
-                if p.is_file():
-                    # do not override existing env vars; later files can fill missing
-                    load_dotenv(p, override=False)
+                try:
+                    if p.is_file():
+                        # do not override existing env vars; later files can fill missing
+                        load_dotenv(p, override=False)
+                except PermissionError:
+                    # File exists but we don't have permission to read it.
+                    # This is fine - systemd may have already loaded it via EnvironmentFile,
+                    # or we'll rely on process environment variables.
+                    pass
 
             # final pass: allow local .env to override explicitly if desired
             # (but keep process env highest priority anyway)
-            if Path(".env").is_file():
-                load_dotenv(Path(".env"), override=True)
+            try:
+                if Path(".env").is_file():
+                    load_dotenv(Path(".env"), override=True)
+            except PermissionError:
+                # Can't access .env file, skip it
+                pass
 
     mqtt_host = _require_env("MQTT_HOST")
     mqtt_port = _parse_int("MQTT_PORT", _require_env("MQTT_PORT"))
