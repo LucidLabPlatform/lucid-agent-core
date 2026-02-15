@@ -13,7 +13,7 @@ import logging
 import signal
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from typing import Optional
 
@@ -119,7 +119,7 @@ def run_agent() -> int:
         mqtt=agent,
         config=cfg,
     )
-    logger.info("Component load results: %s", [r.__dict__ for r in load_results])
+    logger.info("Component load results: %s", [asdict(r) for r in load_results])
 
     rt.components = components
 

@@ -10,12 +10,12 @@ sudo lucid-agent-core install-service
 
 This will:
 - Create system user `lucid`
-- Create `/etc/lucid/agent-core.env` from packaged template (never overwrites existing)
-- Create `/opt/lucid/agent-core/venv` and install the agent
+- Create `/home/lucid/lucid-agent-core/agent-core.env` from packaged template (never overwrites existing)
+- Create `/home/lucid/lucid-agent-core/venv` and install the agent
 - Install systemd unit `/etc/systemd/system/lucid-agent-core.service`
 - Enable the service
 
-Before first run, edit `/etc/lucid/agent-core.env` and set:
+Before first run, edit `/home/lucid/lucid-agent-core/agent-core.env` and set:
 - `MQTT_HOST`
 - `MQTT_PORT`
 - `AGENT_USERNAME`
@@ -30,10 +30,10 @@ sudo systemctl status lucid-agent-core
 
 ## Component registry
 
-Installed components are recorded in `/var/lib/lucid/components.json`. The agent loads components from this registry at startup. Component installs (via MQTT) update this file.
+Installed components are recorded in `/home/lucid/lucid-agent-core/data/components_registry.json`. The agent loads components from this registry at startup. Component installs (via MQTT) update this file.
 
 ## Troubleshooting
 
 - **MQTT connection failed**: Check broker reachability, credentials in env, and network/firewall.
-- **Component load errors**: Inspect registry at `/var/lib/lucid/components.json` and logs.
+- **Component load errors**: Inspect registry at `/home/lucid/lucid-agent-core/data/components_registry.json` and logs.
 - **Logs**: `journalctl -u lucid-agent-core -f` (when running as service).
