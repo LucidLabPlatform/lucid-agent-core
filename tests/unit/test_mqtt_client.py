@@ -15,9 +15,6 @@ class FakeMQTTMessage:
 
 @pytest.fixture
 def fake_paho_client(monkeypatch):
-    """
-    Patch paho.mqtt.client.Client to return a controllable fake.
-    """
     fake = MagicMock()
     fake.is_connected.return_value = True
 
@@ -30,7 +27,6 @@ def fake_paho_client(monkeypatch):
 
 @pytest.fixture
 def client(fake_paho_client, monkeypatch):
-    # Patch executor to make submit synchronous and observable
     submit_calls = []
 
     class FakeExecutor:
@@ -39,7 +35,6 @@ def client(fake_paho_client, monkeypatch):
 
         def submit(self, fn, arg):
             submit_calls.append((fn, arg))
-            # execute immediately
             fn(arg)
 
         def shutdown(self, *a, **k):
@@ -56,7 +51,7 @@ def client(fake_paho_client, monkeypatch):
         max_workers=2,
         heartbeat_interval_s=0,
     )
-    c._submit_calls = submit_calls  # test hook
+    c._submit_calls = submit_calls
     return c
 
 
@@ -64,8 +59,6 @@ def test_connect_sets_lwt_and_starts_loop(client, fake_paho_client):
     assert client.connect() is True
 
     topics = TopicSchema("agent_1")
-
-    # will_set called correctly on status() with retained offline payload
     fake_paho_client.will_set.assert_called()
     args, kwargs = fake_paho_client.will_set.call_args
     assert args[0] == topics.status()
@@ -74,22 +67,20 @@ def test_connect_sets_lwt_and_starts_loop(client, fake_paho_client):
     assert kwargs["qos"] == 1
     obj = json.loads(payload)
     assert obj["state"] == "offline"
-    assert "ts" in obj
-    assert obj["version"] == "1.0.0"
+    assert "connected_since_ts" in obj
+    assert "uptime_s" in obj
 
     fake_paho_client.connect.assert_called_with("localhost", 1883, keepalive=60)
     fake_paho_client.loop_start.assert_called_once()
 
 
-def test_on_connect_subscribes_to_schema_topics_and_publishes_online(client, fake_paho_client, tmp_path):
+def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, tmp_path):
     from lucid_agent_core.core.cmd_context import CoreCommandContext
     from lucid_agent_core.core.config_store import ConfigStore
-    from unittest.mock import MagicMock
 
-    # Set up context before connect
     config_store = ConfigStore(str(tmp_path / "test_cfg.json"))
-    config_store.load()  # Initialize cache
-    
+    config_store.load()
+
     ctx = CoreCommandContext(
         mqtt=client,
         topics=client.topics,
@@ -100,56 +91,38 @@ def test_on_connect_subscribes_to_schema_topics_and_publishes_online(client, fak
     client.set_context(ctx)
 
     client.connect()
-    # simulate successful connect callback
     client._on_connect(fake_paho_client, None, {}, 0)
 
     topics = TopicSchema("agent_1")
 
-    # Verify subscriptions to all 4 command topics
-    fake_paho_client.subscribe.assert_any_call(topics.core_cmd_components_install(), qos=1)
-    fake_paho_client.subscribe.assert_any_call(topics.core_cmd_components_uninstall(), qos=1)
-    fake_paho_client.subscribe.assert_any_call(topics.core_cfg_set(), qos=1)
-    fake_paho_client.subscribe.assert_any_call(topics.core_cmd_refresh(), qos=1)
-    assert fake_paho_client.subscribe.call_count == 4
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_ping(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_restart(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_reset(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_components_install(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_components_uninstall(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_components_enable(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_components_disable(), qos=1)
+    assert fake_paho_client.subscribe.call_count == 7
 
-    # Verify retained snapshots were published (via ctx.publish which calls client.publish)
-    # Check that publish was called with retain=True for retained topics
     publish_calls = fake_paho_client.publish.call_args_list
-    retained_topics = [
-        topics.status(),
-        topics.core_metadata(),
-        topics.core_state(),
-        topics.core_components(),
-        topics.core_cfg_state(),
-    ]
-    
-    # Verify at least 5 retained publishes happened
-    retained_publishes = [
-        call for call in publish_calls
-        if call[1].get("retain") is True  # Check kwargs
-    ]
-    assert len(retained_publishes) >= 5, f"Expected at least 5 retained publishes, got {len(retained_publishes)}"
-    
-    # Verify status payload includes schema and agent_id
-    status_publishes = [
-        call for call in publish_calls
-        if call[0][0] == topics.status()  # First positional arg is topic
-    ]
-    assert len(status_publishes) > 0, "Status not published"
-    status_payload_str = status_publishes[0][1].get("payload") or status_publishes[0][0][1]
-    status_payload = json.loads(status_payload_str)
-    assert status_payload["agent_id"] == "agent_1"
+    retained_publishes = [c for c in publish_calls if c[1].get("retain") is True]
+    assert len(retained_publishes) >= 5
+
+    status_calls = [c for c in publish_calls if c[0][0] == topics.status()]
+    assert len(status_calls) > 0
+    status_payload = json.loads(status_calls[0][1].get("payload") or status_calls[0][0][1])
     assert status_payload["state"] == "online"
+    assert "connected_since_ts" in status_payload
+    assert "uptime_s" in status_payload
 
 
-def test_on_message_dispatches_known_topic(client, fake_paho_client, monkeypatch, tmp_path):
+def test_on_message_dispatches_known_topic(client, fake_paho_client, tmp_path):
     from lucid_agent_core.core.cmd_context import CoreCommandContext
     from lucid_agent_core.core.config_store import ConfigStore
 
-    # Set up context so messages are not rejected
     config_store = ConfigStore(str(tmp_path / "test_cfg2.json"))
     config_store.load()
-    
+
     ctx = CoreCommandContext(
         mqtt=client,
         topics=client.topics,
@@ -159,7 +132,6 @@ def test_on_message_dispatches_known_topic(client, fake_paho_client, monkeypatch
     )
     client.set_context(ctx)
 
-    # Replace handler with spy
     called = {"n": 0, "payload": None}
 
     def handler(p: str) -> None:
@@ -167,15 +139,15 @@ def test_on_message_dispatches_known_topic(client, fake_paho_client, monkeypatch
         called["payload"] = p
 
     topics = TopicSchema("agent_1")
-    client._handlers = {topics.core_cmd_components_install(): handler}
+    client._handlers = {topics.cmd_ping(): handler}
 
-    payload = '{"hello":"world"}'.encode("utf-8")
-    msg = FakeMQTTMessage(topics.core_cmd_components_install(), payload)
+    payload = '{"request_id":"abc"}'.encode("utf-8")
+    msg = FakeMQTTMessage(topics.cmd_ping(), payload)
 
     client._on_message(fake_paho_client, None, msg)
 
     assert called["n"] == 1
-    assert called["payload"] == '{"hello":"world"}'
+    assert called["payload"] == '{"request_id":"abc"}'
 
 
 def test_on_message_ignores_unknown_topic(client, fake_paho_client):
@@ -185,9 +157,9 @@ def test_on_message_ignores_unknown_topic(client, fake_paho_client):
         called["n"] += 1
 
     topics = TopicSchema("agent_1")
-    client._handlers = {topics.core_cmd_components_install(): handler}
+    client._handlers = {topics.cmd_ping(): handler}
 
-    msg = FakeMQTTMessage("lucid/agents/agent_1/core/cmd/unknown", b"{}")
+    msg = FakeMQTTMessage("lucid/agents/agent_1/cmd/unknown", b"{}")
     client._on_message(fake_paho_client, None, msg)
 
     assert called["n"] == 0
@@ -200,9 +172,9 @@ def test_on_message_rejects_non_utf8_payload(client, fake_paho_client):
         called["n"] += 1
 
     topics = TopicSchema("agent_1")
-    client._handlers = {topics.core_cmd_components_install(): handler}
+    client._handlers = {topics.cmd_ping(): handler}
 
-    msg = FakeMQTTMessage(topics.core_cmd_components_install(), b"\xff\xfe\xfd")
+    msg = FakeMQTTMessage(topics.cmd_ping(), b"\xff\xfe\xfd")
     client._on_message(fake_paho_client, None, msg)
 
     assert called["n"] == 0

@@ -1,8 +1,7 @@
 """
-Core command context for LUCID Agent Core.
+Core command context for LUCID Agent Core — unified v1.0.0 contract.
 
-Provides command handlers with MQTT publishing capabilities, topic schema,
-agent metadata, and configuration store access.
+Provides MQTT publishing, topic schema, and result payload shape: request_id, ok, error.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 
 from lucid_agent_core.mqtt_topics import TopicSchema
@@ -19,17 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class MqttPublisher(Protocol):
-    """
-    Minimal MQTT publisher interface for command context.
-
-    This protocol defines the contract that the MQTT client must fulfill.
-    """
+    """Minimal MQTT publisher interface for command context."""
 
     def publish(
         self, topic: str, payload: Any, *, qos: int = 0, retain: bool = False
-    ) -> Any:
-        """Publish a message to MQTT broker."""
-        ...
+    ) -> Any: ...
 
 
 class ConfigStore(Protocol):
@@ -44,22 +36,11 @@ class ConfigStore(Protocol):
         ...
 
 
-def _utc_iso() -> str:
-    """Return current UTC timestamp as ISO8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 @dataclass
 class CoreCommandContext:
     """
     Command execution context for core handlers.
-
-    Provides:
-    - MQTT publishing with JSON encoding
-    - Topic schema for consistent topic construction
-    - Agent identity and version
-    - Configuration store access
-    - Helper methods for event publishing
+    Result payload contract: { request_id, ok, error }.
     """
 
     mqtt: MqttPublisher
@@ -71,62 +52,38 @@ class CoreCommandContext:
     def publish(
         self, topic: str, payload: dict[str, Any], *, retain: bool = False, qos: int = 1
     ) -> Any:
-        """
-        Publish a dict payload to MQTT with JSON encoding.
-
-        Args:
-            topic: MQTT topic to publish to
-            payload: Dict to JSON-encode and publish
-            retain: Whether to retain the message
-            qos: Quality of service level (default 1 for commands/events)
-
-        Returns:
-            MQTTMessageInfo object for wait_for_publish()
-
-        Raises:
-            Exception: If JSON encoding or publish fails
-        """
+        """Publish a dict payload to MQTT with JSON encoding."""
         try:
             payload_str = json.dumps(payload)
         except (TypeError, ValueError) as exc:
             logger.error("Failed to JSON-encode payload for %s: %s", topic, exc)
             raise
-
         return self.mqtt.publish(topic, payload_str, qos=qos, retain=retain)
 
-    def publish_error(
+    def publish_result(
         self,
-        evt_topic: str,
+        action: str,
+        request_id: str,
+        ok: bool,
+        error: Optional[str] = None,
+    ) -> None:
+        """Publish evt/<action>/result. Contract: request_id, ok, error."""
+        topic = self.topics.evt_result(action)
+        payload = {"request_id": request_id, "ok": ok, "error": error}
+        try:
+            self.publish(topic, payload, retain=False, qos=1)
+        except Exception as exc:
+            logger.exception("Failed to publish result to %s: %s", topic, exc)
+
+    def publish_result_error(
+        self,
+        topic: str,
         request_id: str,
         error: str,
-        details: Optional[dict[str, Any]] = None,
     ) -> None:
-        """
-        Publish a standardized error event.
-
-        Args:
-            evt_topic: Event topic to publish to
-            request_id: Request ID from original command
-            error: Error message
-            details: Optional additional error details
-        """
-        payload: dict[str, Any] = {
-            "request_id": request_id,
-            "ok": False,
-            "error": error,
-            "ts": _utc_iso(),
-        }
-
-        if details:
-            payload.update(details)
-
+        """Publish result with ok=False to any result topic."""
+        payload = {"request_id": request_id, "ok": False, "error": error}
         try:
-            self.publish(evt_topic, payload, retain=False, qos=1)
-            logger.info("Published error event to %s: %s", evt_topic, error)
+            self.publish(topic, payload, retain=False, qos=1)
         except Exception as exc:
-            logger.exception("Failed to publish error event to %s: %s", evt_topic, exc)
-
-    @staticmethod
-    def now_ts() -> str:
-        """Return current UTC timestamp as ISO8601 string."""
-        return _utc_iso()
+            logger.exception("Failed to publish error result to %s: %s", topic, exc)

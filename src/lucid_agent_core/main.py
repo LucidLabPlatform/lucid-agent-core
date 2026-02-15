@@ -112,7 +112,7 @@ def run_agent() -> int:
         logger.error("MQTT connection failed")
         return 1
 
-    # Load components (but do not pretend this is lifecycle-managed until you implement start/stop topics)
+    # Load components and register their cmd handlers + update state
     components, load_results = load_components(
         agent_id=cfg.agent_username,
         base_topic=agent.topics.base,
@@ -122,6 +122,17 @@ def run_agent() -> int:
     logger.info("Component load results: %s", [r.__dict__ for r in load_results])
 
     rt.components = components
+
+    # Load registry for component state and gating
+    from lucid_agent_core.components.registry import load_registry
+    registry = load_registry()
+    
+    components_list = [
+        {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
+        for cid, meta in registry.items()
+    ]
+    agent.add_component_handlers(components, registry)
+    agent.publish_retained_state(components_list)
 
     logger.info("Agent running (shutdown via SIGINT/SIGTERM)")
 

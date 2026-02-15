@@ -158,7 +158,7 @@ def handle_install_component(raw_payload: str) -> InstallResult:
         # Example: lucid_agent_cpu-1.0.0-py3-none-any.whl -> lucid-agent-cpu
         dist_name = _extract_dist_name_from_wheel(req.source.asset)
 
-        # Registry update: store source + checksum + dist_name for auditability
+        # Registry update: store source + checksum + dist_name + enabled for auditability
         registry[req.component_id] = {
             "repo": f"{req.source.owner}/{req.source.repo}",
             "version": req.version,
@@ -166,6 +166,7 @@ def handle_install_component(raw_payload: str) -> InstallResult:
             "entrypoint": req.entrypoint,
             "sha256": req.source.sha256.lower(),
             "dist_name": dist_name,
+            "enabled": True,
             "source": {
                 "type": req.source.type,
                 "owner": req.source.owner,

@@ -1,14 +1,20 @@
 """
-Retained snapshot builders for LUCID Agent Core.
+Retained snapshot builders for LUCID Agent Core — unified v1.0.0 contract.
 
 Pure functions that build MQTT retained payload dicts.
-No I/O, no side effects, fully deterministic.
+No schema versioning; no legacy fields.
 """
 
 from __future__ import annotations
 
+import platform
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
+
+try:
+    import psutil
+except ImportError:
+    psutil = None  # type: ignore
 
 
 def now_iso8601() -> str:
@@ -16,94 +22,83 @@ def now_iso8601() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def build_status_payload(state: str, version: str, agent_id: str) -> dict[str, Any]:
+def build_metadata(agent_id: str, version: str) -> dict[str, Any]:
     """
-    Build retained status payload.
+    Build retained metadata. Contract: agent_id, version, platform, architecture.
+    """
+    return {
+        "agent_id": agent_id,
+        "version": version,
+        "platform": platform.system() or "unknown",
+        "architecture": platform.machine() or "unknown",
+    }
 
-    Args:
-        state: "online" or "offline"
-        version: Agent version string
-        agent_id: Agent username/identifier
 
-    Returns:
-        Dict with state, version, agent_id, and timestamp
+def build_status(
+    state: str,
+    connected_since_ts: str,
+    uptime_s: float | int,
+) -> dict[str, Any]:
+    """
+    Build retained status. Contract: state, connected_since_ts, uptime_s.
+    state: online | offline | error | starting
     """
     return {
         "state": state,
-        "version": version,
-        "agent_id": agent_id,
-        "ts": now_iso8601(),
+        "connected_since_ts": connected_since_ts,
+        "uptime_s": uptime_s,
     }
 
 
-def build_core_metadata(agent_id: str, version: str) -> dict[str, Any]:
+def _system_cpu_percent() -> float:
+    if psutil is None:
+        return 0.0
+    try:
+        return float(psutil.cpu_percent(interval=None))
+    except Exception:
+        return 0.0
+
+
+def _system_memory_percent() -> float:
+    if psutil is None:
+        return 0.0
+    try:
+        return float(psutil.virtual_memory().percent)
+    except Exception:
+        return 0.0
+
+
+def _system_disk_percent() -> float:
+    if psutil is None:
+        return 0.0
+    try:
+        return float(psutil.disk_usage("/").percent)
+    except Exception:
+        return 0.0
+
+
+def build_state(
+    components_list: list[dict[str, Any]],
+) -> dict[str, Any]:
     """
-    Build core metadata snapshot.
-
-    Args:
-        agent_id: Agent username/identifier
-        version: Agent version string
-
-    Returns:
-        Dict with agent_id, version, and timestamp
+    Build retained state. Contract: cpu_percent, memory_percent, disk_percent, components.
+    components: [ { component_id, version, enabled } ]
     """
     return {
-        "agent_id": agent_id,
-        "version": version,
-        "ts": now_iso8601(),
+        "cpu_percent": _system_cpu_percent(),
+        "memory_percent": _system_memory_percent(),
+        "disk_percent": _system_disk_percent(),
+        "components": list(components_list),
     }
 
 
-def build_core_state(agent_id: str, uptime_s: Optional[int] = None) -> dict[str, Any]:
+def build_cfg_telemetry(cfg: dict[str, Any]) -> dict[str, Any]:
     """
-    Build core state snapshot.
-
-    Args:
-        agent_id: Agent username/identifier
-        uptime_s: Optional uptime in seconds
-
-    Returns:
-        Dict with state, uptime_s (if provided), agent_id, and timestamp
-    """
-    payload: dict[str, Any] = {
-        "agent_id": agent_id,
-        "state": "running",
-        "ts": now_iso8601(),
-    }
-    if uptime_s is not None:
-        payload["uptime_s"] = uptime_s
-    return payload
-
-
-def build_core_components_snapshot(registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """
-    Build core components snapshot from registry.
-
-    Args:
-        registry: Components registry dict (component_id -> metadata)
-
-    Returns:
-        Dict with count, components dict, and timestamp
+    Build retained cfg/telemetry. Contract: enabled, metrics, interval_s, change_threshold_percent.
     """
     return {
-        "count": len(registry),
-        "components": registry,
-        "ts": now_iso8601(),
+        "enabled": cfg.get("enabled", False),
+        "metrics": dict(cfg.get("metrics", {})),
+        "interval_s": int(cfg.get("interval_s", 2)),
+        "change_threshold_percent": float(cfg.get("change_threshold_percent", 2.0)),
     }
-
-
-def build_core_cfg_state(cfg: dict[str, Any]) -> dict[str, Any]:
-    """
-    Build core config state snapshot.
-
-    Args:
-        cfg: Runtime configuration dict
-
-    Returns:
-        Dict with cfg and timestamp
-    """
-    return {
-        "cfg": cfg,
-        "ts": now_iso8601(),
-    }
-
