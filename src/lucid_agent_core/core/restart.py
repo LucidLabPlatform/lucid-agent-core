@@ -6,11 +6,12 @@ import signal
 import time
 from pathlib import Path
 
+from lucid_agent_core.paths import get_paths
+
 logger = logging.getLogger(__name__)
 
 # Debounce restarts to avoid loops (seconds)
 _RESTART_DEBOUNCE_S = 10
-_SENTINEL_PATH = Path("/var/lib/lucid/restart.requested")
 
 
 def _is_systemd_like() -> bool:
@@ -40,11 +41,13 @@ def request_systemd_restart(reason: str = "restart requested") -> bool:
         logger.warning("Restart requested (%s) but systemd not detected; ignoring", reason)
         return False
 
+    paths = get_paths()
+    sentinel_path = paths.restart_sentinel_path
     now = time.time()
 
     try:
-        if _SENTINEL_PATH.exists():
-            last = _SENTINEL_PATH.stat().st_mtime
+        if sentinel_path.exists():
+            last = sentinel_path.stat().st_mtime
             if now - last < _RESTART_DEBOUNCE_S:
                 logger.warning(
                     "Restart requested (%s) but debounced (last %.1fs ago)",
@@ -53,8 +56,8 @@ def request_systemd_restart(reason: str = "restart requested") -> bool:
                 )
                 return False
 
-        _SENTINEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SENTINEL_PATH.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))} {reason}\n")
+        sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+        sentinel_path.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))} {reason}\n")
 
     except Exception:
         # Sentinel failure should not prevent restart.

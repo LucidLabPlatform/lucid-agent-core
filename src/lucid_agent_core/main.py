@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from typing import Optional
 
-from lucid_agent_core.components.context import ComponentContext
+from lucid_component_base import ComponentContext
 from lucid_agent_core.components.loader import load_components
 
 logging.basicConfig(
@@ -58,8 +58,22 @@ def run_agent() -> int:
     # Lazy imports keep install-service isolated from runtime env/config.
     from lucid_agent_core.mqtt_client import AgentMQTTClient
     from lucid_agent_core.config import load_config
+    from lucid_agent_core.core.config_store import ConfigStore
+    from lucid_agent_core.core.cmd_context import CoreCommandContext
+    from lucid_agent_core.paths import get_paths, ensure_dirs
+
+    # Ensure all directories exist
+    paths = get_paths()
+    ensure_dirs(paths)
 
     cfg = load_config()
+
+    # 1. Load runtime config store
+    config_store = ConfigStore()
+    runtime_cfg = config_store.load()
+    heartbeat_s = runtime_cfg.get("heartbeat_s", cfg.agent_heartbeat_s)
+
+    logger.info("Runtime config loaded: %s", runtime_cfg)
 
     rt = Runtime(shutdown=threading.Event())
     _install_signal_handlers(rt)
@@ -70,24 +84,41 @@ def run_agent() -> int:
     logger.info("Agent username: %s", cfg.agent_username)
     logger.info("============================================================")
 
+    # 2. Create MQTT client with initial heartbeat
     agent = AgentMQTTClient(
         cfg.mqtt_host,
         cfg.mqtt_port,
         cfg.agent_username,
         cfg.agent_password,
         cfg.agent_version,
-        heartbeat_interval_s=int(cfg.agent_heartbeat_s) if str(cfg.agent_heartbeat_s).isdigit() else 0,
+        heartbeat_interval_s=heartbeat_s,
     )
     rt.agent = agent
 
+    # 3. Create command context
+    ctx = CoreCommandContext(
+        mqtt=agent,
+        topics=agent.topics,
+        agent_id=cfg.agent_username,
+        agent_version=cfg.agent_version,
+        config_store=config_store,
+    )
+
+    # 4. Set context BEFORE connect
+    agent.set_context(ctx)
+
+    # 5. Connect (will publish snapshots in _on_connect)
     if not agent.connect():
         logger.error("MQTT connection failed")
         return 1
 
     # Load components (but do not pretend this is lifecycle-managed until you implement start/stop topics)
-    context = ComponentContext.create(agent_id=cfg.agent_username, mqtt=agent, config=cfg)
-
-    components, load_results = load_components(context)
+    components, load_results = load_components(
+        agent_id=cfg.agent_username,
+        base_topic=agent.topics.base,
+        mqtt=agent,
+        config=cfg,
+    )
     logger.info("Component load results: %s", [r.__dict__ for r in load_results])
 
     rt.components = components
@@ -131,9 +162,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("run", help="Run agent runtime")
 
-    sub.add_parser(
+    install_parser = sub.add_parser(
         "install-service",
         help="Install and enable systemd service (requires sudo; Linux only)",
+    )
+    install_parser.add_argument(
+        "--wheel",
+        type=str,
+        metavar="PATH",
+        help="Path to local wheel file (alternative to GitHub release download)",
     )
 
     return p
@@ -143,9 +180,11 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
     if args.cmd == "install-service":
+        from pathlib import Path
         from lucid_agent_core.installer import install_service
 
-        install_service()
+        wheel_path = Path(args.wheel) if args.wheel else None
+        install_service(wheel_path)
         return
 
     if args.cmd == "run":

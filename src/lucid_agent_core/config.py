@@ -5,7 +5,7 @@ Single source for runtime configuration. Values come from environment variables,
 optionally loaded from standard env files.
 
 Priority (lowest -> highest):
-1) /etc/lucid/agent-core.env (system install)
+1) /home/lucid/lucid-agent-core/agent-core.env (system install)
 2) ~/.config/lucid-agent-core/.env (user install)
 3) ./.env (project override)
 4) process environment variables (always win)
@@ -33,8 +33,8 @@ def _package_version() -> str:
 
 
 def _env_paths() -> Iterable[Path]:
-    # 1) system install
-    yield Path("/etc/lucid/agent-core.env")
+    # 1) system install (under lucid home)
+    yield Path("/home/lucid/lucid-agent-core/agent-core.env")
 
     # 2) user config dir
     if sys.platform == "win32":

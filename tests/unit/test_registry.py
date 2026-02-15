@@ -6,16 +6,18 @@ from pathlib import Path
 import pytest
 
 import lucid_agent_core.components.registry as r
+from lucid_agent_core.paths import build_paths, reset_paths, set_paths
 
 
 @pytest.fixture
-def tmp_registry(monkeypatch, tmp_path: Path):
-    reg = tmp_path / "components.json"
-    lock = tmp_path / "components.json.lock"
-
-    monkeypatch.setattr(r, "REGISTRY_PATH", reg)
-    monkeypatch.setattr(r, "LOCK_PATH", lock)
-    return reg
+def tmp_registry(tmp_path: Path):
+    """Use tmp_path as base_dir so registry reads/writes under tmp_path/data/."""
+    paths = build_paths(tmp_path)
+    set_paths(paths)
+    try:
+        yield paths.registry_path
+    finally:
+        reset_paths()
 
 
 def test_write_then_load_round_trip(tmp_registry):
@@ -58,12 +60,9 @@ def test_corrupt_json_is_handled_and_preserved(tmp_registry):
     loaded = r.load_registry()
     assert loaded == {}
 
-    # Corrupted file should be renamed (suffix pattern depends on your implementation).
-    # We assert at least one ".corrupt." file exists.
-    corrupts = list(tmp_registry.parent.glob("components.corrupt.*.json")) + list(
-        tmp_registry.parent.glob("components.json.corrupt.*.json")
-    )
-    assert len(corrupts) >= 0  # relax if your exact naming differs
+    # Corrupted file should be renamed to components_registry.corrupt.<ts>.json
+    corrupts = list(tmp_registry.parent.glob("components_registry.corrupt.*.json"))
+    assert len(corrupts) >= 1
 
 
 def test_written_file_is_valid_json(tmp_registry):

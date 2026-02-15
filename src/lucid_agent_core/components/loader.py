@@ -5,8 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from lucid_agent_core.components.base import Component
-from lucid_agent_core.components.context import ComponentContext
+from lucid_component_base import Component, ComponentContext
 from lucid_agent_core.components.registry import load_registry
 
 logger = logging.getLogger(__name__)
@@ -31,7 +30,10 @@ def _parse_entrypoint(entrypoint: str) -> tuple[str, str]:
 
 
 def load_components(
-    context: ComponentContext,
+    agent_id: str,
+    base_topic: str,
+    mqtt: Any,
+    config: object,
     *,
     registry: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[Component], list[ComponentLoadResult]]:
@@ -50,7 +52,14 @@ def load_components(
     reg = registry if registry is not None else load_registry()
 
     for component_id, meta in reg.items():
-        clog = context.logger(component_id)
+        context = ComponentContext.create(
+            agent_id=agent_id,
+            base_topic=base_topic,
+            component_id=component_id,
+            mqtt=mqtt,
+            config=config,
+        )
+        clog = context.logger()
 
         entrypoint = meta.get("entrypoint")
         if not isinstance(entrypoint, str) or not entrypoint:

@@ -1,7 +1,7 @@
 """
 Component registry — persistent JSON store of installed components.
 
-Path: /var/lib/lucid/components.json. Atomic writes with fsync.
+Path: {base_dir}/data/components_registry.json. Atomic writes with fsync.
 """
 from __future__ import annotations
 
@@ -13,8 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-REGISTRY_PATH = Path("/var/lib/lucid/components.json")
-LOCK_PATH = Path("/var/lib/lucid/components.json.lock")
+from lucid_agent_core.paths import get_paths
 
 
 class RegistryError(RuntimeError):
@@ -49,18 +48,21 @@ def _validate_registry_shape(data: Any) -> dict[str, dict[str, Any]]:
 
 
 def load_registry() -> dict[str, dict[str, Any]]:
-    if not REGISTRY_PATH.exists():
+    paths = get_paths()
+    registry_path = paths.registry_path
+    
+    if not registry_path.exists():
         return {}
 
     try:
-        with REGISTRY_PATH.open("r", encoding="utf-8") as f:
+        with registry_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return _validate_registry_shape(data)
     except json.JSONDecodeError:
         # Preserve corrupted file for debugging instead of silently hiding it.
-        corrupt = REGISTRY_PATH.with_suffix(f".corrupt.{_now_ts()}.json")
+        corrupt = registry_path.with_suffix(f".corrupt.{_now_ts()}.json")
         try:
-            REGISTRY_PATH.replace(corrupt)
+            registry_path.replace(corrupt)
         except Exception:
             # If we can't move it, we still fail soft and return empty.
             pass
@@ -77,12 +79,16 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
     - replace
     - fsync directory
     """
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    paths = get_paths()
+    registry_path = paths.registry_path
+    lock_path = paths.registry_lock_path
+    
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Lazy import: only Linux has fcntl. Agent targets Linux primarily.
     import fcntl  # type: ignore
 
-    with LOCK_PATH.open("w") as lockf:
+    with lock_path.open("w") as lockf:
         fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
 
         cleaned = _validate_registry_shape(data)
@@ -91,15 +97,15 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
             mode="w",
             encoding="utf-8",
             delete=False,
-            dir=str(REGISTRY_PATH.parent),
+            dir=str(registry_path.parent),
         ) as tf:
             json.dump(cleaned, tf, indent=2, sort_keys=True)
             tf.flush()
             os.fsync(tf.fileno())
             tmp_path = Path(tf.name)
 
-        os.replace(tmp_path, REGISTRY_PATH)
-        _fsync_dir(REGISTRY_PATH.parent)
+        os.replace(tmp_path, registry_path)
+        _fsync_dir(registry_path.parent)
 
         fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 

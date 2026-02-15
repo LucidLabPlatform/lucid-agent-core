@@ -20,10 +20,9 @@ from typing import Any, Literal, Optional
 from urllib.request import Request, urlopen
 
 from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
+from lucid_agent_core.paths import get_paths
 
 logger = logging.getLogger(__name__)
-
-PIP_PATH = Path("/opt/lucid/agent-core/venv/bin/pip")
 
 _COMPONENT_ID_RE = re.compile(r"^[a-z0-9_]+$")
 _ENTRYPOINT_RE = re.compile(
@@ -155,13 +154,18 @@ def handle_install_component(raw_payload: str) -> InstallResult:
             pip_out, pip_err = _pip_install(wheel_path)
         _verify_entrypoint(req.entrypoint)
 
-        # Registry update: store source + checksum for auditability
+        # Extract dist_name from wheel filename for uninstall
+        # Example: lucid_agent_cpu-1.0.0-py3-none-any.whl -> lucid-agent-cpu
+        dist_name = _extract_dist_name_from_wheel(req.source.asset)
+
+        # Registry update: store source + checksum + dist_name for auditability
         registry[req.component_id] = {
             "repo": f"{req.source.owner}/{req.source.repo}",
             "version": req.version,
             "wheel_url": wheel_url,
             "entrypoint": req.entrypoint,
             "sha256": req.source.sha256.lower(),
+            "dist_name": dist_name,
             "source": {
                 "type": req.source.type,
                 "owner": req.source.owner,
@@ -261,15 +265,18 @@ def _verify_sha256(path: Path, *, expected: str) -> None:
             h.update(chunk)
     got = h.hexdigest().lower()
     if got != expected_l:
-        raise RuntimeError(f"sha256 mismatch: expected={expected_l} got={got}")
+        raise RuntimeError(f"sha256 mismatch: got={got}")
 
 
 def _pip_install(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
-    if not PIP_PATH.exists():
-        raise FileNotFoundError(f"pip executable not found: {PIP_PATH}")
+    paths = get_paths()
+    pip_path = paths.pip_path
+    
+    if not pip_path.exists():
+        raise FileNotFoundError(f"pip executable not found: {pip_path}")
 
     completed = subprocess.run(
-        [str(PIP_PATH), "install", "--upgrade", str(wheel_path)],
+        [str(pip_path), "install", "--upgrade", str(wheel_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -323,3 +330,34 @@ def _extract_version_best_effort(raw_payload: str) -> str:
     except Exception:
         pass
     return ""
+
+
+def _extract_dist_name_from_wheel(wheel_filename: str) -> str:
+    """
+    Extract distribution name from wheel filename.
+
+    Wheel format: {distribution}-{version}(-{build})?-{python}-{abi}-{platform}.whl
+    Example: lucid_agent_cpu-1.0.0-py3-none-any.whl -> lucid-agent-cpu
+
+    Args:
+        wheel_filename: Wheel filename (e.g., "lucid_agent_cpu-1.0.0-py3-none-any.whl")
+
+    Returns:
+        Distribution name with underscores replaced by hyphens
+    """
+    # Strip .whl extension
+    if wheel_filename.endswith(".whl"):
+        wheel_filename = wheel_filename[:-4]
+
+    # Split on first hyphen to get distribution name
+    # (version always starts with a digit after the first hyphen)
+    parts = wheel_filename.split("-", 1)
+    if len(parts) < 1:
+        raise ValueError(f"Invalid wheel filename format: {wheel_filename}")
+
+    dist_name = parts[0]
+
+    # PEP 503: normalize by replacing underscores with hyphens
+    dist_name = dist_name.replace("_", "-")
+
+    return dist_name
