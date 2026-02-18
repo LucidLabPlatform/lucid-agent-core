@@ -240,7 +240,8 @@ class AgentMQTTClient:
             self._connected_since_ts = _utc_iso()
         # Else keep existing values (reconnect scenario)
 
-        for topic in self._handlers:
+        # Iterate over a copy to avoid RuntimeError if handlers are added concurrently
+        for topic in list(self._handlers.keys()):
             client.subscribe(topic, qos=1)
             logger.info("Subscribed: %s", topic)
 
