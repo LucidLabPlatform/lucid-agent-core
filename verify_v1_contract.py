@@ -33,7 +33,7 @@ def verify_unified_structure():
         t.telemetry("cpu"),
         t.cmd_ping(),
         t.cmd_restart(),
-        t.cmd_reset(),
+        t.cmd_refresh(),
         t.cmd_components_install(),
         t.cmd_components_uninstall(),
         t.cmd_components_enable(),

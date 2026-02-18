@@ -1,7 +1,7 @@
 """
 Core command handlers for LUCID Agent Core — unified v1.0.0 contract.
 
-Commands: cmd/ping, cmd/restart, cmd/reset, cmd/cfg/set, cmd/components/{install,uninstall,enable,disable,upgrade}, cmd/core/upgrade.
+Commands: cmd/ping, cmd/restart, cmd/refresh, cmd/cfg/set, cmd/components/{install,uninstall,enable,disable,upgrade}, cmd/core/upgrade.
 Results: evt/<action>/result with { request_id, ok, error }.
 """
 
@@ -54,11 +54,36 @@ def on_restart(ctx: CoreCommandContext, payload_str: str) -> None:
         logger.info("Restart requested for request_id=%s", request_id)
 
 
-def on_reset(ctx: CoreCommandContext, payload_str: str) -> None:
-    """Handle cmd/reset → evt/reset/result. No side effects; acknowledge only."""
+def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/refresh → evt/refresh/result.
+    Republish retained topics that are not always updated: metadata, status, state, cfg, cfg/telemetry.
+    """
     request_id = _request_id(payload_str)
-    ctx.publish_result("reset", request_id, ok=True, error=None)
-    logger.debug("Reset result published for request_id=%s", request_id)
+    try:
+        registry = load_registry()
+        components_list = [
+            {"component_id": cid, "version": meta.get("version", ""), "enabled": meta.get("enabled", True)}
+            for cid, meta in registry.items()
+        ]
+        if hasattr(ctx.mqtt, "publish_retained_refresh"):
+            ctx.mqtt.publish_retained_refresh(components_list)
+        else:
+            from lucid_agent_core.core.snapshots import build_metadata, build_state, build_cfg_telemetry
+            state = build_state(components_list)
+            ctx.publish(ctx.topics.metadata(), build_metadata(ctx.agent_id, ctx.agent_version), retain=True, qos=1)
+            ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
+            cfg = ctx.config_store.get_cached()
+            ctx.publish(ctx.topics.cfg(), cfg, retain=True, qos=1)
+            telemetry_cfg = cfg.get("telemetry") if isinstance(cfg.get("telemetry"), dict) else {}
+            if not telemetry_cfg:
+                telemetry_cfg = {"enabled": False, "metrics": {}, "interval_s": 2, "change_threshold_percent": 2.0}
+            ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(telemetry_cfg), retain=True, qos=1)
+        ctx.publish_result("refresh", request_id, ok=True, error=None)
+        logger.info("Refresh completed for request_id=%s", request_id)
+    except Exception as exc:
+        logger.exception("Refresh failed: %s", exc)
+        ctx.publish_result("refresh", request_id, ok=False, error=str(exc))
 
 
 def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
@@ -314,7 +339,7 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
     try:
         result = handle_install_component(payload_str)
         result_dict = asdict(result)
-
+        
         # Publish result
         msg_info = ctx.publish(
             ctx.topics.evt_components_result("upgrade"),

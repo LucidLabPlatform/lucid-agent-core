@@ -97,7 +97,7 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
 
     fake_paho_client.subscribe.assert_any_call(topics.cmd_ping(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_restart(), qos=1)
-    fake_paho_client.subscribe.assert_any_call(topics.cmd_reset(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_refresh(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_cfg_set(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_install(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_uninstall(), qos=1)

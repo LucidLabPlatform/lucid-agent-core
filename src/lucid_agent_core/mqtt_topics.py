@@ -4,7 +4,7 @@ MQTT Topic Schema for LUCID Agent Core — unified v1.0.0 contract.
 All topics under lucid/agents/<agent_id>/.
 Agent retained: metadata, status, state, cfg, cfg/telemetry.
 Agent stream: logs, telemetry/<metric>.
-Agent commands: cmd/ping, cmd/restart, cmd/reset.
+Agent commands: cmd/ping, cmd/restart, cmd/refresh.
 Agent results: evt/<action>/result.
 Component topics: components/<component_id>/...
 """
@@ -94,8 +94,8 @@ class TopicSchema:
     def cmd_restart(self) -> str:
         return f"{self.base}/cmd/restart"
 
-    def cmd_reset(self) -> str:
-        return f"{self.base}/cmd/reset"
+    def cmd_refresh(self) -> str:
+        return f"{self.base}/cmd/refresh"
 
     def cmd_components_install(self) -> str:
         return f"{self.base}/cmd/components/install"

@@ -1,7 +1,7 @@
 """
 MQTT client for LUCID Agent Core — unified v1.0.0 contract.
 
-Connect, subscribe to agent cmd/ping, cmd/restart, cmd/reset and component cmd topics,
+Connect, subscribe to agent cmd/ping, cmd/restart, cmd/refresh and component cmd topics,
 publish retained metadata, status, state, cfg, cfg/telemetry at startup.
 """
 
@@ -99,7 +99,7 @@ class AgentMQTTClient:
         from lucid_agent_core.core.handlers import (
             on_ping,
             on_restart,
-            on_reset,
+            on_refresh,
             on_cfg_set,
             on_components_install,
             on_components_uninstall,
@@ -113,7 +113,7 @@ class AgentMQTTClient:
         self._handlers = {
             self.topics.cmd_ping(): lambda p: on_ping(ctx, p),
             self.topics.cmd_restart(): lambda p: on_restart(ctx, p),
-            self.topics.cmd_reset(): lambda p: on_reset(ctx, p),
+            self.topics.cmd_refresh(): lambda p: on_refresh(ctx, p),
             self.topics.cmd_cfg_set(): lambda p: on_cfg_set(ctx, p),
             self.topics.cmd_components_install(): lambda p: on_components_install(ctx, p),
             self.topics.cmd_components_uninstall(): lambda p: on_components_uninstall(ctx, p),
@@ -167,6 +167,42 @@ class AgentMQTTClient:
         state = build_state(components_list)
         self._ctx.publish(self.topics.state(), state, retain=True, qos=1)
         logger.info("Published retained state with %d components", len(components_list))
+
+    def publish_retained_refresh(self, components_list: list[dict[str, Any]]) -> None:
+        """
+        Republish all retained snapshots that are not always updated: metadata, status,
+        state, cfg, cfg/telemetry. Use after cmd/refresh to refresh topics without restart.
+        """
+        if not self._ctx or not self._client:
+            return
+        from lucid_agent_core.core.snapshots import (
+            build_metadata,
+            build_status,
+            build_state,
+            build_cfg_telemetry,
+        )
+        ctx = self._ctx
+        metadata = build_metadata(ctx.agent_id, self.version)
+        ctx.publish(self.topics.metadata(), metadata, retain=True, qos=1)
+        uptime_s = 0.0
+        if self._connected_ts is not None:
+            uptime_s = max(0.0, time.time() - self._connected_ts)
+        status = build_status(
+            "online",
+            self._connected_since_ts or _utc_iso(),
+            uptime_s,
+        )
+        ctx.publish(self.topics.status(), status, retain=True, qos=1)
+        state = build_state(components_list)
+        ctx.publish(self.topics.state(), state, retain=True, qos=1)
+        cfg = ctx.config_store.get_cached()
+        ctx.publish(self.topics.cfg(), cfg, retain=True, qos=1)
+        telemetry_cfg = cfg.get("telemetry") if isinstance(cfg.get("telemetry"), dict) else {}
+        if not telemetry_cfg:
+            telemetry_cfg = {"enabled": False, "metrics": {}, "interval_s": 2, "change_threshold_percent": 2.0}
+        cfg_telem = build_cfg_telemetry(telemetry_cfg)
+        ctx.publish(self.topics.cfg_telemetry(), cfg_telem, retain=True, qos=1)
+        logger.info("Published retained refresh (metadata, status, state, cfg, cfg/telemetry)")
 
     def set_heartbeat_interval(self, interval_s: int) -> None:
         with self._hb_interval_lock:
