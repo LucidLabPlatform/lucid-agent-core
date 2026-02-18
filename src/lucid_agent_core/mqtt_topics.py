@@ -109,6 +109,12 @@ class TopicSchema:
     def cmd_components_disable(self) -> str:
         return f"{self.base}/cmd/components/disable"
 
+    def cmd_components_upgrade(self) -> str:
+        return f"{self.base}/cmd/components/upgrade"
+
+    def cmd_core_upgrade(self) -> str:
+        return f"{self.base}/cmd/core/upgrade"
+
     def cmd_cfg_set(self) -> str:
         return f"{self.base}/cmd/cfg/set"
 

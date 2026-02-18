@@ -105,6 +105,8 @@ class AgentMQTTClient:
             on_components_uninstall,
             on_components_enable,
             on_components_disable,
+            on_components_upgrade,
+            on_core_upgrade,
         )
 
         ctx = self._ctx
@@ -117,6 +119,8 @@ class AgentMQTTClient:
             self.topics.cmd_components_uninstall(): lambda p: on_components_uninstall(ctx, p),
             self.topics.cmd_components_enable(): lambda p: on_components_enable(ctx, p),
             self.topics.cmd_components_disable(): lambda p: on_components_disable(ctx, p),
+            self.topics.cmd_components_upgrade(): lambda p: on_components_upgrade(ctx, p),
+            self.topics.cmd_core_upgrade(): lambda p: on_core_upgrade(ctx, p),
         }
         logger.debug("Built %d agent command handlers", len(self._handlers))
 

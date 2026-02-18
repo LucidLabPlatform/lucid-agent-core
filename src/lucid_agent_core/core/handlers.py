@@ -1,7 +1,7 @@
 """
 Core command handlers for LUCID Agent Core — unified v1.0.0 contract.
 
-Commands: cmd/ping, cmd/restart, cmd/reset, cmd/components/{install,uninstall,enable,disable}.
+Commands: cmd/ping, cmd/restart, cmd/reset, cmd/cfg/set, cmd/components/{install,uninstall,enable,disable,upgrade}, cmd/core/upgrade.
 Results: evt/<action>/result with { request_id, ok, error }.
 """
 
@@ -15,6 +15,7 @@ from lucid_agent_core.components.registry import load_registry, write_registry
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.core.component_installer import handle_install_component
 from lucid_agent_core.core.component_uninstaller import handle_uninstall_component
+from lucid_agent_core.core.core_upgrader import handle_core_upgrade
 from lucid_agent_core.core.log_config import apply_log_level_from_config
 from lucid_agent_core.core.restart import request_systemd_restart
 from lucid_agent_core.core.snapshots import build_state
@@ -300,3 +301,102 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
         logger.info("Config updated via cmd/cfg/set, log_level applied")
     else:
         logger.warning("Config set failed: %s", result.get("error"))
+
+
+def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/components/upgrade → evt/components/upgrade/result.
+
+    Reuses install logic (install already upgrades via --upgrade flag).
+    After upgrade: update state.components and republish retained state.
+    If restart_required: flush publish, then restart.
+    """
+    try:
+        result = handle_install_component(payload_str)
+        result_dict = asdict(result)
+
+        # Publish result
+        msg_info = ctx.publish(
+            ctx.topics.evt_components_result("upgrade"),
+            result_dict,
+            retain=False,
+            qos=1,
+        )
+
+        # Update retained state
+        registry = load_registry()
+        components_list = [
+            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
+            for cid, meta in registry.items()
+        ]
+        state = build_state(components_list)
+        ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
+
+        logger.info(
+            "Upgrade result: ok=%s component=%s restart=%s",
+            result.ok,
+            result.component_id,
+            result.restart_required,
+        )
+
+        if result.ok and result.restart_required:
+            try:
+                msg_info.wait_for_publish(timeout=2.0)
+                logger.info("Upgrade result published, requesting restart")
+                request_systemd_restart(reason=f"component upgrade: {result.component_id}")
+            except Exception as exc:
+                logger.error("Failed to wait for publish or restart: %s", exc)
+
+    except Exception as exc:
+        logger.exception("Unhandled error in on_components_upgrade")
+        payload = _parse_payload(payload_str)
+        request_id = payload.get("request_id", "")
+        ctx.publish_result_error(
+            ctx.topics.evt_components_result("upgrade"),
+            request_id,
+            f"unhandled error: {exc}",
+        )
+
+
+def on_core_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/core/upgrade → evt/core/upgrade/result.
+
+    Downloads wheel, verifies SHA256, upgrades venv, then restarts.
+    """
+    try:
+        result = handle_core_upgrade(payload_str)
+        result_dict = asdict(result)
+
+        # Publish result
+        msg_info = ctx.publish(
+            ctx.topics.evt_result("core/upgrade"),
+            result_dict,
+            retain=False,
+            qos=1,
+        )
+
+        logger.info(
+            "Core upgrade result: ok=%s version=%s restart=%s",
+            result.ok,
+            result.version,
+            result.restart_required,
+        )
+
+        if result.ok and result.restart_required:
+            try:
+                msg_info.wait_for_publish(timeout=2.0)
+                logger.info("Core upgrade result published, requesting restart")
+                request_systemd_restart(reason=f"core upgrade: {result.version}")
+            except Exception as exc:
+                logger.error("Failed to wait for publish or restart: %s", exc)
+
+    except Exception as exc:
+        logger.exception("Unhandled error in on_core_upgrade")
+        payload = _parse_payload(payload_str)
+        request_id = payload.get("request_id", "")
+        ctx.publish_result_error(
+            ctx.topics.evt_result("core/upgrade"),
+            request_id,
+            f"unhandled error: {exc}",
+        )

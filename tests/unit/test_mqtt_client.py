@@ -98,15 +98,18 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
     fake_paho_client.subscribe.assert_any_call(topics.cmd_ping(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_restart(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_reset(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_cfg_set(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_install(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_uninstall(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_enable(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_disable(), qos=1)
-    assert fake_paho_client.subscribe.call_count == 7
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_components_upgrade(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_core_upgrade(), qos=1)
+    assert fake_paho_client.subscribe.call_count == 10
 
     publish_calls = fake_paho_client.publish.call_args_list
     retained_publishes = [c for c in publish_calls if c[1].get("retain") is True]
-    assert len(retained_publishes) >= 5
+    assert len(retained_publishes) >= 4  # metadata, status, cfg, cfg/telemetry (state published after components load)
 
     status_calls = [c for c in publish_calls if c[0][0] == topics.status()]
     assert len(status_calls) > 0
