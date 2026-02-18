@@ -155,12 +155,12 @@ class AgentMQTTClient:
         Publish retained state with current components list.
         Call after load_components() so state.components is accurate.
         """
-        if not self._ctx or not self._client or not self._client.is_connected():
+        if not self._ctx or not self._client:
             return
         from lucid_agent_core.core.snapshots import build_state
         state = build_state(components_list)
         self._ctx.publish(self.topics.state(), state, retain=True, qos=1)
-        logger.debug("Published retained state with %d components", len(components_list))
+        logger.info("Published retained state with %d components", len(components_list))
 
     def set_heartbeat_interval(self, interval_s: int) -> None:
         with self._hb_interval_lock:
