@@ -29,7 +29,7 @@ ALLOWED_KEYS = {
 # Validation constraints
 MIN_HEARTBEAT = 5
 MAX_HEARTBEAT = 3600
-VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 class ConfigStoreError(RuntimeError):

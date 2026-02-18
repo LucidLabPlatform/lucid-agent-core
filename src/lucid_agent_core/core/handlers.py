@@ -15,6 +15,7 @@ from lucid_agent_core.components.registry import load_registry, write_registry
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.core.component_installer import handle_install_component
 from lucid_agent_core.core.component_uninstaller import handle_uninstall_component
+from lucid_agent_core.core.log_config import apply_log_level_from_config
 from lucid_agent_core.core.restart import request_systemd_restart
 from lucid_agent_core.core.snapshots import build_state
 
@@ -273,3 +274,29 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
             request_id,
             f"error: {exc}",
         )
+
+
+def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/cfg/set: merge payload["set"] into config, save, republish cfg, apply log_level.
+    Result on evt/cfg/set/result.
+    """
+    try:
+        payload = _parse_payload(payload_str)
+    except Exception:
+        payload = {}
+    request_id = payload.get("request_id", "")
+
+    new_cfg, result = ctx.config_store.apply_set(payload)
+    result["request_id"] = request_id
+
+    if result.get("ok"):
+        apply_log_level_from_config(new_cfg)
+        ctx.publish(ctx.topics.cfg(), new_cfg, retain=True, qos=1)
+
+    topic = ctx.topics.evt_result("cfg/set")
+    ctx.publish(topic, result, retain=False, qos=1)
+    if result.get("ok"):
+        logger.info("Config updated via cmd/cfg/set, log_level applied")
+    else:
+        logger.warning("Config set failed: %s", result.get("error"))

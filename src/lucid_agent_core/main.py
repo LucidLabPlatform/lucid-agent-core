@@ -20,10 +20,22 @@ from typing import Optional
 from lucid_component_base import ComponentContext
 from lucid_agent_core.components.loader import load_components
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+
+def _configure_logging(cfg: dict | None = None) -> None:
+    """
+    Single log level for all scopes (core, base, components).
+    Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else INFO.
+    """
+    from lucid_agent_core.core.log_config import apply_log_level_from_config
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    apply_log_level_from_config(cfg)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -68,10 +80,13 @@ def run_agent() -> int:
 
     cfg = load_config()
 
-    # 1. Load runtime config store
+    # 1. Load runtime config store and apply log level from cfg (or LUCID_LOG_LEVEL env)
     config_store = ConfigStore()
     runtime_cfg = config_store.load()
     heartbeat_s = runtime_cfg.get("heartbeat_s", cfg.agent_heartbeat_s)
+
+    from lucid_agent_core.core.log_config import apply_log_level_from_config
+    apply_log_level_from_config(runtime_cfg)
 
     logger.info("Runtime config loaded: %s", runtime_cfg)
 
@@ -120,9 +135,6 @@ def run_agent() -> int:
         time.sleep(0.1)
     else:
         logger.warning("Connection not established after 5 seconds, proceeding anyway")
-    
-    # Small delay to ensure _on_connect callback has finished publishing other snapshots
-    time.sleep(0.2)
 
     # Load components and register their cmd handlers + update state
     components, load_results = load_components(

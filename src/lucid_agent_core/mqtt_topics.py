@@ -109,6 +109,9 @@ class TopicSchema:
     def cmd_components_disable(self) -> str:
         return f"{self.base}/cmd/components/disable"
 
+    def cmd_cfg_set(self) -> str:
+        return f"{self.base}/cmd/cfg/set"
+
     # -------------------------
     # Agent results
     # -------------------------
