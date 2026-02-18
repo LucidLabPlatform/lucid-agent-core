@@ -134,9 +134,31 @@ def _detect_python() -> str:
     raise RuntimeError("Python 3.11+ required but not found.")
 
 
+def _ensure_pip_cache() -> None:
+    """
+    Ensure pip cache directory exists with correct ownership.
+    """
+    cache_dir = Path(f"/home/{SYSTEM_USER}/.cache/pip")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(cache_dir.parent)])
+    print(f"Ensured pip cache directory: {cache_dir}")
+
+
+def _ensure_venv_permissions() -> None:
+    """
+    Ensure venv directory and all contents are owned by SYSTEM_USER.
+    This is critical for pip upgrades to work correctly.
+    """
+    if VENV_DIR.exists():
+        _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(VENV_DIR)])
+        print(f"Fixed venv permissions: {VENV_DIR}")
+
+
 def _create_venv() -> None:
     if VENV_DIR.exists():
         print(f"Virtual environment already exists: {VENV_DIR}")
+        # Still ensure permissions are correct (important for upgrades)
+        _ensure_venv_permissions()
         return
 
     python_exec = _detect_python()
@@ -156,6 +178,10 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
                    If provided, installs from local wheel.
                    If None, installs from GitHub release URL.
     """
+    # Ensure permissions are correct before installing (critical for upgrades)
+    _ensure_venv_permissions()
+    _ensure_pip_cache()
+    
     pip = VENV_DIR / "bin" / "pip"
 
     if not pip.exists():
@@ -167,7 +193,8 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
             raise FileNotFoundError(f"Wheel file not found: {wheel_path}")
         
         print(f"Installing from local wheel: {wheel_path}")
-        _run([str(pip), "install", "--upgrade", str(wheel_path)])
+        # Run pip as SYSTEM_USER to ensure correct ownership of installed files
+        _run(["sudo", "-u", SYSTEM_USER, str(pip), "install", "--upgrade", str(wheel_path)])
     else:
         # Install from GitHub release
         version = pkg_version("lucid-agent-core")
@@ -178,7 +205,11 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
         )
         
         print(f"Installing from GitHub release: {wheel_url}")
-        _run([str(pip), "install", "--upgrade", wheel_url])
+        # Run pip as SYSTEM_USER to ensure correct ownership of installed files
+        _run(["sudo", "-u", SYSTEM_USER, str(pip), "install", "--upgrade", wheel_url])
+
+    # Fix ownership again after installation (in case any files were created as root)
+    _ensure_venv_permissions()
 
     # Verify CLI exists
     cli = VENV_DIR / "bin" / "lucid-agent-core"
