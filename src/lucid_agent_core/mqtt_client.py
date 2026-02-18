@@ -253,7 +253,6 @@ class AgentMQTTClient:
             from lucid_agent_core.core.snapshots import (
                 build_metadata,
                 build_status,
-                build_state,
                 build_cfg_telemetry,
             )
 
@@ -269,8 +268,8 @@ class AgentMQTTClient:
             )
             ctx.publish(self.topics.status(), status, retain=True, qos=1)
 
-            state = build_state([])
-            ctx.publish(self.topics.state(), state, retain=True, qos=1)
+            # State will be published by publish_retained_state() after components are loaded
+            # This avoids publishing empty state that gets overwritten immediately
 
             cfg = ctx.config_store.get_cached()
             ctx.publish(self.topics.cfg(), cfg, retain=True, qos=1)

@@ -112,6 +112,18 @@ def run_agent() -> int:
         logger.error("MQTT connection failed")
         return 1
 
+    # Wait for connection callback to complete before publishing populated state
+    # This ensures the MQTT connection is fully established before we publish
+    for _ in range(50):  # Wait up to 5 seconds
+        if agent.is_connected():
+            break
+        time.sleep(0.1)
+    else:
+        logger.warning("Connection not established after 5 seconds, proceeding anyway")
+    
+    # Small delay to ensure _on_connect callback has finished publishing other snapshots
+    time.sleep(0.2)
+
     # Load components and register their cmd handlers + update state
     components, load_results = load_components(
         agent_id=cfg.agent_username,
