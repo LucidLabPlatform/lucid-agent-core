@@ -137,5 +137,8 @@ class TopicSchema:
     def component_cmd_reset(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/cmd/reset"
 
-    def component_cmd_identify(self, component_id: str) -> str:
-        return f"{self.component_base(component_id)}/cmd/identify"
+    def component_cmd_ping(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/cmd/ping"
+
+    def component_cmd_cfg_set(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/cmd/cfg/set"

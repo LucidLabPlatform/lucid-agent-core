@@ -34,7 +34,8 @@ def test_component_topic_paths() -> None:
 
     assert t.component_base("cpu") == "lucid/agents/agent_1/components/cpu"
     assert t.component_cmd_reset("cpu") == "lucid/agents/agent_1/components/cpu/cmd/reset"
-    assert t.component_cmd_identify("cpu") == "lucid/agents/agent_1/components/cpu/cmd/identify"
+    assert t.component_cmd_ping("cpu") == "lucid/agents/agent_1/components/cpu/cmd/ping"
+    assert t.component_cmd_cfg_set("cpu") == "lucid/agents/agent_1/components/cpu/cmd/cfg/set"
 
 
 @pytest.mark.parametrize("bad", ["", "a/b", "a b", "..", "agent-1"])

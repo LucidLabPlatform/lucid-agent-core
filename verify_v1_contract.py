@@ -49,7 +49,7 @@ def verify_unified_structure():
     component_topics = [
         t.component_base("fixture_cpu"),
         t.component_cmd_reset("fixture_cpu"),
-        t.component_cmd_identify("fixture_cpu"),
+        t.component_cmd_ping("fixture_cpu"),
     ]
     
     for topic in component_topics:

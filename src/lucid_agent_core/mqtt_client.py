@@ -126,7 +126,7 @@ class AgentMQTTClient:
 
     def add_component_handlers(self, components: list[Any], registry: dict[str, dict]) -> None:
         """
-        Subscribe to each component's cmd/reset, cmd/identify, and cfg/telemetry topics.
+        Subscribe to each component's cmd/reset, cmd/ping, cmd/cfg/set, and cfg/telemetry topics.
         Call after connect() and load_components().
         Enforces enabled gating: only subscribe if component is enabled in registry.
         """
@@ -144,19 +144,28 @@ class AgentMQTTClient:
                 logger.info("Skipping cmd subscriptions for disabled component: %s", cid)
                 continue
             
-            for action, method_name in [("reset", "on_cmd_reset"), ("identify", "on_cmd_identify")]:
+            cmd_actions = [
+                ("reset", "on_cmd_reset", self.topics.component_cmd_reset),
+                ("ping", "on_cmd_ping", self.topics.component_cmd_ping),
+            ]
+            for action, method_name, topic_fn in cmd_actions:
                 method = getattr(comp, method_name, None)
                 if not callable(method):
                     continue
-                if action == "reset":
-                    topic = self.topics.component_cmd_reset(cid)
-                else:
-                    topic = self.topics.component_cmd_identify(cid)
+                topic = topic_fn(cid)
                 self._handlers[topic] = lambda p, m=method: m(p)
                 self._client.subscribe(topic, qos=1)
                 logger.info("Subscribed: %s", topic)
 
-            # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...)
+            # cmd/cfg/set → Component.on_cmd_cfg_set(...)
+            on_cfg_set = getattr(comp, "on_cmd_cfg_set", None)
+            if callable(on_cfg_set):
+                cfg_set_topic = self.topics.component_cmd_cfg_set(cid)
+                self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
+                self._client.subscribe(cfg_set_topic, qos=1)
+                logger.info("Subscribed: %s", cfg_set_topic)
+
+            # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...) (legacy; prefer cmd/cfg/set)
             set_cfg = getattr(comp, "set_telemetry_config", None)
             if callable(set_cfg):
                 cfg_topic = f"{self.topics.component_base(cid)}/cfg/telemetry"
