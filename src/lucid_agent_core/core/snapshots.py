@@ -24,13 +24,23 @@ def now_iso8601() -> str:
 
 def build_metadata(agent_id: str, version: str) -> dict[str, Any]:
     """
-    Build retained metadata. Contract: agent_id, version, platform, architecture.
+    Build retained metadata. Contract: agent_id, version, platform, architecture, config_schema.
     """
     return {
         "agent_id": agent_id,
         "version": version,
         "platform": platform.system() or "unknown",
         "architecture": platform.machine() or "unknown",
+        "config_schema": {
+            "telemetry": {
+                "enabled": "boolean",
+                "metrics": "object<string, boolean>",
+                "interval_s": "integer (min: 1)",
+                "change_threshold_percent": "number (min: 0)",
+            },
+            "heartbeat_s": "integer (min: 5, max: 3600)",
+            "log_level": "string (enum: DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+        },
     }
 
 
@@ -92,13 +102,30 @@ def build_state(
     }
 
 
-def build_cfg_telemetry(cfg: dict[str, Any]) -> dict[str, Any]:
+def build_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     """
-    Build retained cfg/telemetry. Contract: enabled, metrics, interval_s, change_threshold_percent.
+    Build retained cfg. Contract: telemetry (nested), heartbeat_s, log_level.
+    Ensures telemetry structure exists with defaults.
     """
-    return {
-        "enabled": cfg.get("enabled", False),
-        "metrics": dict(cfg.get("metrics", {})),
-        "interval_s": int(cfg.get("interval_s", 2)),
-        "change_threshold_percent": float(cfg.get("change_threshold_percent", 2.0)),
-    }
+    result = cfg.copy()
+    
+    # Ensure telemetry structure exists
+    if "telemetry" not in result:
+        result["telemetry"] = {}
+    
+    telemetry = result["telemetry"]
+    if not isinstance(telemetry, dict):
+        telemetry = {}
+        result["telemetry"] = telemetry
+    
+    # Set defaults for telemetry if missing
+    if "enabled" not in telemetry:
+        telemetry["enabled"] = False
+    if "metrics" not in telemetry:
+        telemetry["metrics"] = {}
+    if "interval_s" not in telemetry:
+        telemetry["interval_s"] = 2
+    if "change_threshold_percent" not in telemetry:
+        telemetry["change_threshold_percent"] = 2.0
+    
+    return result

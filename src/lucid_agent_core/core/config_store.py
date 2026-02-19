@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Allowed configuration keys and their types/constraints
 ALLOWED_KEYS = {
-    "telemetry_enabled": bool,
+    "telemetry": dict,  # Nested: {enabled, metrics, interval_s, change_threshold_percent}
     "heartbeat_s": int,
     "log_level": str,
 }
@@ -198,6 +198,21 @@ class ConfigStore:
                 return False, f"{key} must be {expected_type.__name__}, got {type(value).__name__}"
 
             # Type-specific validation
+            if key == "telemetry":
+                if not isinstance(value, dict):
+                    return False, "telemetry must be a dict"
+                # Validate telemetry structure
+                if "enabled" in value and not isinstance(value["enabled"], bool):
+                    return False, "telemetry.enabled must be boolean"
+                if "metrics" in value and not isinstance(value["metrics"], dict):
+                    return False, "telemetry.metrics must be a dict"
+                if "interval_s" in value:
+                    if not isinstance(value["interval_s"], int) or value["interval_s"] < 1:
+                        return False, "telemetry.interval_s must be integer >= 1"
+                if "change_threshold_percent" in value:
+                    if not isinstance(value["change_threshold_percent"], (int, float)) or value["change_threshold_percent"] < 0:
+                        return False, "telemetry.change_threshold_percent must be number >= 0"
+
             if key == "heartbeat_s":
                 if not (MIN_HEARTBEAT <= value <= MAX_HEARTBEAT):
                     return False, f"heartbeat_s must be between {MIN_HEARTBEAT} and {MAX_HEARTBEAT}"
@@ -246,6 +261,12 @@ class ConfigStore:
         # Merge with current config
         current = self.get_cached().copy()
         new_cfg = {**current, **set_dict}
+        
+        # Deep merge for nested telemetry config
+        if "telemetry" in set_dict and "telemetry" in current:
+            new_cfg["telemetry"] = {**current["telemetry"], **set_dict["telemetry"]}
+        elif "telemetry" in set_dict:
+            new_cfg["telemetry"] = set_dict["telemetry"]
 
         # Validate merged config
         ok, error = self.validate(new_cfg)

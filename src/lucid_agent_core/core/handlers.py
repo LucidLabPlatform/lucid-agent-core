@@ -58,7 +58,7 @@ def on_restart(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/refresh → evt/refresh/result.
-    Republish retained topics that are not always updated: metadata, status, state, cfg, cfg/telemetry.
+    Republish retained topics that are not always updated: metadata, status, state, cfg.
     """
     request_id = _request_id(payload_str)
     try:
@@ -70,16 +70,12 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
         if hasattr(ctx.mqtt, "publish_retained_refresh"):
             ctx.mqtt.publish_retained_refresh(components_list)
         else:
-            from lucid_agent_core.core.snapshots import build_metadata, build_state, build_cfg_telemetry
+            from lucid_agent_core.core.snapshots import build_metadata, build_state, build_cfg
             state = build_state(components_list)
             ctx.publish(ctx.topics.metadata(), build_metadata(ctx.agent_id, ctx.agent_version), retain=True, qos=1)
             ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
             cfg = ctx.config_store.get_cached()
-            ctx.publish(ctx.topics.cfg(), cfg, retain=True, qos=1)
-            telemetry_cfg = cfg.get("telemetry") if isinstance(cfg.get("telemetry"), dict) else {}
-            if not telemetry_cfg:
-                telemetry_cfg = {"enabled": False, "metrics": {}, "interval_s": 2, "change_threshold_percent": 2.0}
-            ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(telemetry_cfg), retain=True, qos=1)
+            ctx.publish(ctx.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
         ctx.publish_result("refresh", request_id, ok=True, error=None)
         logger.info("Refresh completed for request_id=%s", request_id)
     except Exception as exc:
@@ -335,7 +331,8 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
 
     if result.get("ok"):
         apply_log_level_from_config(new_cfg)
-        ctx.publish(ctx.topics.cfg(), new_cfg, retain=True, qos=1)
+        from lucid_agent_core.core.snapshots import build_cfg
+        ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
 
     topic = ctx.topics.evt_result("cfg/set")
     ctx.publish(topic, result, retain=False, qos=1)

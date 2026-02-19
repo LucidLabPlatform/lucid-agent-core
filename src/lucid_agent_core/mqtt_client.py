@@ -2,7 +2,7 @@
 MQTT client for LUCID Agent Core — unified v1.0.0 contract.
 
 Connect, subscribe to agent cmd/ping, cmd/restart, cmd/refresh and component cmd topics,
-publish retained metadata, status, state, cfg, cfg/telemetry at startup.
+publish retained metadata, status, state, cfg at startup.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ class AgentMQTTClient:
 
     def add_component_handlers(self, components: list[Any], registry: dict[str, dict]) -> None:
         """
-        Subscribe to each component's cmd/reset, cmd/ping, cmd/cfg/set, and cfg/telemetry topics.
+        Subscribe to each component's cmd/reset, cmd/ping, cmd/cfg/set topics.
         Call after connect() and load_components().
         Enforces enabled gating: only subscribe if component is enabled in registry.
         """
@@ -170,30 +170,6 @@ class AgentMQTTClient:
                 self._client.subscribe(cfg_set_topic, qos=1)
                 logger.info("Subscribed: %s", cfg_set_topic)
 
-            # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...) (legacy; prefer cmd/cfg/set)
-            set_cfg = getattr(comp, "set_telemetry_config", None)
-            if callable(set_cfg):
-                cfg_topic = f"{self.topics.component_base(cid)}/cfg/telemetry"
-
-                def _handle_cfg_telemetry(payload_str: str, setter=set_cfg, topic=cfg_topic) -> None:
-                    try:
-                        cfg = json.loads(payload_str) if payload_str else {}
-                        if not isinstance(cfg, dict):
-                            logger.warning("Ignoring non-object cfg/telemetry payload on %s", topic)
-                            return
-                    except json.JSONDecodeError:
-                        logger.warning("Failed to decode cfg/telemetry payload on %s", topic)
-                        return
-                    try:
-                        setter(cfg)
-                        logger.info("Applied telemetry config for component %s from %s", cid, topic)
-                    except Exception as exc:
-                        logger.exception("Failed to apply telemetry config for component %s: %s", cid, exc)
-
-                self._handlers[cfg_topic] = _handle_cfg_telemetry
-                self._client.subscribe(cfg_topic, qos=1)
-                logger.info("Subscribed: %s", cfg_topic)
-
     def get_component(self, component_id: str) -> Optional[Any]:
         """Get a component by ID. Returns None if not found."""
         with self._components_lock:
@@ -225,7 +201,6 @@ class AgentMQTTClient:
                 self.topics.component_cmd_reset(component_id),
                 self.topics.component_cmd_ping(component_id),
                 self.topics.component_cmd_cfg_set(component_id),
-                f"{self.topics.component_base(component_id)}/cfg/telemetry",
             ]
             for topic in topics_to_unsub:
                 if topic in self._handlers:
@@ -272,7 +247,7 @@ class AgentMQTTClient:
             if current_status == ComponentStatus.RUNNING:
                 logger.info("Component %s already running, resubscribing and republishing", component_id)
                 self._subscribe_component_topics(comp, component_id)
-                # Republish retained topics (metadata, status, state, cfg, cfg/telemetry)
+                # Republish retained topics (metadata, status, state, cfg)
                 # to ensure subscribers get fresh data after enable
                 if hasattr(comp, "_publish_all_retained"):
                     try:
@@ -333,30 +308,6 @@ class AgentMQTTClient:
                 self._client.subscribe(cfg_set_topic, qos=1)
                 logger.info("Subscribed: %s", cfg_set_topic)
 
-        # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...)
-        set_cfg = getattr(comp, "set_telemetry_config", None)
-        if callable(set_cfg):
-            cfg_topic = f"{self.topics.component_base(component_id)}/cfg/telemetry"
-            if cfg_topic not in self._handlers:
-                import json
-                def _handle_cfg_telemetry(payload_str: str, setter=set_cfg, topic=cfg_topic) -> None:
-                    try:
-                        cfg = json.loads(payload_str) if payload_str else {}
-                        if not isinstance(cfg, dict):
-                            logger.warning("Ignoring non-object cfg/telemetry payload on %s", topic)
-                            return
-                    except json.JSONDecodeError:
-                        logger.warning("Failed to decode cfg/telemetry payload on %s", topic)
-                        return
-                    try:
-                        setter(cfg)
-                        logger.info("Applied telemetry config for component %s from %s", component_id, topic)
-                    except Exception as exc:
-                        logger.exception("Failed to apply telemetry config for component %s: %s", component_id, exc)
-                self._handlers[cfg_topic] = _handle_cfg_telemetry
-                self._client.subscribe(cfg_topic, qos=1)
-                logger.info("Subscribed: %s", cfg_topic)
-
     def publish_retained_state(self, components_list: list[dict[str, Any]]) -> None:
         """
         Publish retained state with current components list.
@@ -372,7 +323,7 @@ class AgentMQTTClient:
     def publish_retained_refresh(self, components_list: list[dict[str, Any]]) -> None:
         """
         Republish all retained snapshots that are not always updated: metadata, status,
-        state, cfg, cfg/telemetry. Use after cmd/refresh to refresh topics without restart.
+        state, cfg. Use after cmd/refresh to refresh topics without restart.
         """
         if not self._ctx or not self._client:
             return
@@ -380,7 +331,7 @@ class AgentMQTTClient:
             build_metadata,
             build_status,
             build_state,
-            build_cfg_telemetry,
+            build_cfg,
         )
         ctx = self._ctx
         metadata = build_metadata(ctx.agent_id, self.version)
@@ -397,13 +348,8 @@ class AgentMQTTClient:
         state = build_state(components_list)
         ctx.publish(self.topics.state(), state, retain=True, qos=1)
         cfg = ctx.config_store.get_cached()
-        ctx.publish(self.topics.cfg(), cfg, retain=True, qos=1)
-        telemetry_cfg = cfg.get("telemetry") if isinstance(cfg.get("telemetry"), dict) else {}
-        if not telemetry_cfg:
-            telemetry_cfg = {"enabled": False, "metrics": {}, "interval_s": 2, "change_threshold_percent": 2.0}
-        cfg_telem = build_cfg_telemetry(telemetry_cfg)
-        ctx.publish(self.topics.cfg_telemetry(), cfg_telem, retain=True, qos=1)
-        logger.info("Published retained refresh (metadata, status, state, cfg, cfg/telemetry)")
+        ctx.publish(self.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
+        logger.info("Published retained refresh (metadata, status, state, cfg)")
 
     def set_heartbeat_interval(self, interval_s: int) -> None:
         with self._hb_interval_lock:
@@ -496,7 +442,7 @@ class AgentMQTTClient:
             from lucid_agent_core.core.snapshots import (
                 build_metadata,
                 build_status,
-                build_cfg_telemetry,
+                build_cfg,
             )
 
             ctx = self._ctx
@@ -515,13 +461,7 @@ class AgentMQTTClient:
             # This avoids publishing empty state that gets overwritten immediately
 
             cfg = ctx.config_store.get_cached()
-            ctx.publish(self.topics.cfg(), cfg, retain=True, qos=1)
-
-            telemetry_cfg = cfg.get("telemetry") if isinstance(cfg.get("telemetry"), dict) else {}
-            if not telemetry_cfg:
-                telemetry_cfg = {"enabled": False, "metrics": {}, "interval_s": 2, "change_threshold_percent": 2.0}
-            cfg_telem = build_cfg_telemetry(telemetry_cfg)
-            ctx.publish(self.topics.cfg_telemetry(), cfg_telem, retain=True, qos=1)
+            ctx.publish(self.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
 
             logger.info("Published all retained snapshots on connect")
         except Exception as exc:
