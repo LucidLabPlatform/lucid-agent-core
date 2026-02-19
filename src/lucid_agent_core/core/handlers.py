@@ -15,6 +15,7 @@ from lucid_agent_core.components.registry import load_registry, write_registry
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.core.component_installer import handle_install_component
 from lucid_agent_core.core.component_uninstaller import handle_uninstall_component
+from lucid_agent_core.core.component_upgrader import handle_component_upgrade
 from lucid_agent_core.core.core_upgrader import handle_core_upgrade
 from lucid_agent_core.core.log_config import apply_log_level_from_config
 from lucid_agent_core.core.restart import request_systemd_restart
@@ -332,14 +333,13 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/upgrade → evt/components/upgrade/result.
 
-    Reuses install logic (install already upgrades via --upgrade flag).
-    After upgrade: update state.components and republish retained state.
-    If restart_required: flush publish, then restart.
+    Downloads wheel, verifies SHA256, upgrades venv, updates registry, then restarts.
+    Same pattern as core upgrade.
     """
     try:
-        result = handle_install_component(payload_str)
+        result = handle_component_upgrade(payload_str)
         result_dict = asdict(result)
-        
+
         # Publish result
         msg_info = ctx.publish(
             ctx.topics.evt_components_result("upgrade"),
@@ -358,17 +358,18 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
 
         logger.info(
-            "Upgrade result: ok=%s component=%s restart=%s",
+            "Component upgrade result: ok=%s component=%s version=%s restart=%s",
             result.ok,
             result.component_id,
+            result.version,
             result.restart_required,
         )
 
         if result.ok and result.restart_required:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
-                logger.info("Upgrade result published, requesting restart")
-                request_systemd_restart(reason=f"component upgrade: {result.component_id}")
+                logger.info("Component upgrade result published, requesting restart")
+                request_systemd_restart(reason=f"component upgrade: {result.component_id} to {result.version}")
             except Exception as exc:
                 logger.error("Failed to wait for publish or restart: %s", exc)
 
