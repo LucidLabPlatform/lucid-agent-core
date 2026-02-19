@@ -126,7 +126,7 @@ class AgentMQTTClient:
 
     def add_component_handlers(self, components: list[Any], registry: dict[str, dict]) -> None:
         """
-        Subscribe to each component's cmd/reset and cmd/identify and add handlers.
+        Subscribe to each component's cmd/reset, cmd/identify, and cfg/telemetry topics.
         Call after connect() and load_components().
         Enforces enabled gating: only subscribe if component is enabled in registry.
         """
@@ -155,6 +155,30 @@ class AgentMQTTClient:
                 self._handlers[topic] = lambda p, m=method: m(p)
                 self._client.subscribe(topic, qos=1)
                 logger.info("Subscribed: %s", topic)
+
+            # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...)
+            set_cfg = getattr(comp, "set_telemetry_config", None)
+            if callable(set_cfg):
+                cfg_topic = f"{self.topics.component_base(cid)}/cfg/telemetry"
+
+                def _handle_cfg_telemetry(payload_str: str, setter=set_cfg, topic=cfg_topic) -> None:
+                    try:
+                        cfg = json.loads(payload_str) if payload_str else {}
+                        if not isinstance(cfg, dict):
+                            logger.warning("Ignoring non-object cfg/telemetry payload on %s", topic)
+                            return
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to decode cfg/telemetry payload on %s", topic)
+                        return
+                    try:
+                        setter(cfg)
+                        logger.info("Applied telemetry config for component %s from %s", cid, topic)
+                    except Exception as exc:
+                        logger.exception("Failed to apply telemetry config for component %s: %s", cid, exc)
+
+                self._handlers[cfg_topic] = _handle_cfg_telemetry
+                self._client.subscribe(cfg_topic, qos=1)
+                logger.info("Subscribed: %s", cfg_topic)
 
     def publish_retained_state(self, components_list: list[dict[str, Any]]) -> None:
         """
