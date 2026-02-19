@@ -230,6 +230,10 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
         started = False
         if ctx.component_manager:
             started = ctx.component_manager.start_component(component_id, registry)
+            if not started:
+                logger.warning("Component %s enable: start_component returned False (component may not be loaded)", component_id)
+        else:
+            logger.warning("Component %s enable: component_manager not available", component_id)
         
         # Republish state
         components_list = [

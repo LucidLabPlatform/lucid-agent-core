@@ -258,11 +258,19 @@ class AgentMQTTClient:
         # Check if already loaded
         comp = self.get_component(component_id)
         if comp is not None:
-            # Already loaded, check if running
             from lucid_component_base import ComponentStatus
-            if hasattr(comp, "state") and comp.state.status == ComponentStatus.RUNNING:
-                logger.info("Component %s already running", component_id)
-                # Still resubscribe in case subscriptions were removed
+            
+            # Check current status
+            current_status = None
+            if hasattr(comp, "state") and hasattr(comp.state, "status"):
+                current_status = comp.state.status
+                logger.info("Component %s found, current status: %s", component_id, current_status.value)
+            else:
+                logger.warning("Component %s found but missing state attribute", component_id)
+            
+            # If already running, just resubscribe and republish
+            if current_status == ComponentStatus.RUNNING:
+                logger.info("Component %s already running, resubscribing and republishing", component_id)
                 self._subscribe_component_topics(comp, component_id)
                 # Republish retained topics (metadata, status, state, cfg, cfg/telemetry)
                 # to ensure subscribers get fresh data after enable
@@ -273,15 +281,23 @@ class AgentMQTTClient:
                     except Exception as exc:
                         logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
                 return True
-            # Try to start it
-            try:
-                comp.start()
-                logger.info("Started component: %s", component_id)
-                # Subscribe to component topics
-                self._subscribe_component_topics(comp, component_id)
-                return True
-            except Exception as exc:
-                logger.exception("Failed to start component %s: %s", component_id, exc)
+            
+            # If stopped or failed, try to start it
+            if current_status in (ComponentStatus.STOPPED, ComponentStatus.FAILED, None):
+                logger.info("Component %s is %s, attempting to start", component_id, current_status.value if current_status else "unknown")
+                try:
+                    comp.start()
+                    logger.info("Successfully started component: %s", component_id)
+                    # Subscribe to component topics
+                    self._subscribe_component_topics(comp, component_id)
+                    return True
+                except Exception as exc:
+                    logger.exception("Failed to start component %s: %s", component_id, exc)
+                    return False
+            
+            # If in STARTING or STOPPING state, wait a bit and check again
+            if current_status in (ComponentStatus.STARTING, ComponentStatus.STOPPING):
+                logger.warning("Component %s is in transitional state %s, cannot start now", component_id, current_status.value)
                 return False
 
         # Component not loaded - would need to load it, but that's complex
