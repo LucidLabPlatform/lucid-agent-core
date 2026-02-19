@@ -123,7 +123,7 @@ def _pip_upgrade(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
         raise FileNotFoundError(f"pip executable not found: {pip}")
 
     completed = subprocess.run(
-        ["sudo", "-u", SYSTEM_USER, str(pip), "install", "--upgrade", str(wheel_path)],
+        [str(pip), "install", "--upgrade", str(wheel_path)],
         check=False,
         capture_output=True,
         text=True,
