@@ -264,6 +264,14 @@ class AgentMQTTClient:
                 logger.info("Component %s already running", component_id)
                 # Still resubscribe in case subscriptions were removed
                 self._subscribe_component_topics(comp, component_id)
+                # Republish retained topics (metadata, status, state, cfg, cfg/telemetry)
+                # to ensure subscribers get fresh data after enable
+                if hasattr(comp, "_publish_all_retained"):
+                    try:
+                        comp._publish_all_retained()
+                        logger.info("Republished retained topics for component: %s", component_id)
+                    except Exception as exc:
+                        logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
                 return True
             # Try to start it
             try:
