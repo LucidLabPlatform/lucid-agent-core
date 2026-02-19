@@ -199,7 +199,7 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/enable → evt/components/enable/result.
     
-    Set enabled=true in registry and republish state.
+    Set enabled=true in registry, start component if loaded, resubscribe to topics, republish state.
     """
     payload = _parse_payload(payload_str)
     request_id = payload.get("request_id", "")
@@ -226,6 +226,11 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
         registry[component_id]["enabled"] = True
         write_registry(registry)
         
+        # Try to start component if loaded (will resubscribe automatically)
+        started = False
+        if ctx.component_manager:
+            started = ctx.component_manager.start_component(component_id, registry)
+        
         # Republish state
         components_list = [
             {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
@@ -238,7 +243,7 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
         result = {"request_id": request_id, "ok": True, "error": None}
         ctx.publish(ctx.topics.evt_components_result("enable"), result, retain=False, qos=1)
         
-        logger.info("Component enabled: %s", component_id)
+        logger.info("Component enabled: %s (started=%s)", component_id, started)
     
     except Exception as exc:
         logger.exception("Error enabling component")
@@ -253,7 +258,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/disable → evt/components/disable/result.
     
-    Set enabled=false in registry and republish state.
+    Set enabled=false in registry, stop component, unsubscribe from topics, republish state.
     """
     payload = _parse_payload(payload_str)
     request_id = payload.get("request_id", "")
@@ -277,6 +282,13 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
             )
             return
         
+        # Stop component if running
+        stopped = False
+        if ctx.component_manager:
+            stopped = ctx.component_manager.stop_component(component_id)
+            if stopped:
+                logger.info("Stopped component: %s", component_id)
+        
         registry[component_id]["enabled"] = False
         write_registry(registry)
         
@@ -292,7 +304,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
         result = {"request_id": request_id, "ok": True, "error": None}
         ctx.publish(ctx.topics.evt_components_result("disable"), result, retain=False, qos=1)
         
-        logger.info("Component disabled: %s", component_id)
+        logger.info("Component disabled: %s (stopped=%s)", component_id, stopped)
     
     except Exception as exc:
         logger.exception("Error disabling component")

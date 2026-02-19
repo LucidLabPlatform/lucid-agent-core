@@ -77,6 +77,8 @@ class AgentMQTTClient:
 
         self._ctx: Optional[Any] = None
         self._handlers: dict[str, Callable[[str], None]] = {}
+        self._components: list[Any] = []
+        self._components_lock = threading.Lock()
         self._connected_since_ts: Optional[str] = None
         self._connected_ts: Optional[float] = None
 
@@ -134,6 +136,9 @@ class AgentMQTTClient:
             logger.warning("add_component_handlers called but client not connected")
             return
 
+        with self._components_lock:
+            self._components = list(components)
+
         for comp in components:
             cid = getattr(comp, "component_id", None)
             if not cid:
@@ -185,6 +190,145 @@ class AgentMQTTClient:
                     except Exception as exc:
                         logger.exception("Failed to apply telemetry config for component %s: %s", cid, exc)
 
+                self._handlers[cfg_topic] = _handle_cfg_telemetry
+                self._client.subscribe(cfg_topic, qos=1)
+                logger.info("Subscribed: %s", cfg_topic)
+
+    def get_component(self, component_id: str) -> Optional[Any]:
+        """Get a component by ID. Returns None if not found."""
+        with self._components_lock:
+            for comp in self._components:
+                cid = getattr(comp, "component_id", None)
+                if cid == component_id:
+                    return comp
+        return None
+
+    def stop_component(self, component_id: str) -> bool:
+        """
+        Stop a running component by ID. Returns True if stopped, False if not found.
+        Also unsubscribes from component command topics.
+        """
+        comp = self.get_component(component_id)
+        if comp is None:
+            return False
+        
+        try:
+            comp.stop()
+            logger.info("Stopped component: %s", component_id)
+        except Exception as exc:
+            logger.exception("Failed to stop component %s: %s", component_id, exc)
+            return False
+
+        # Unsubscribe from component command topics
+        if self._client and self._client.is_connected():
+            topics_to_unsub = [
+                self.topics.component_cmd_reset(component_id),
+                self.topics.component_cmd_ping(component_id),
+                self.topics.component_cmd_cfg_set(component_id),
+                f"{self.topics.component_base(component_id)}/cfg/telemetry",
+            ]
+            for topic in topics_to_unsub:
+                if topic in self._handlers:
+                    try:
+                        self._client.unsubscribe(topic)
+                        del self._handlers[topic]
+                        logger.info("Unsubscribed: %s", topic)
+                    except Exception as exc:
+                        logger.warning("Failed to unsubscribe %s: %s", topic, exc)
+
+        return True
+
+    def start_component(self, component_id: str, registry: dict[str, dict]) -> bool:
+        """
+        Start a component by ID. Component must be in registry and enabled.
+        Also subscribes to component command topics.
+        Returns True if started, False if not found or disabled.
+        """
+        from lucid_agent_core.components.loader import load_registry
+        from lucid_agent_core.components.registry import load_registry as _load_registry
+        
+        reg = registry if registry else _load_registry()
+        if component_id not in reg:
+            return False
+        
+        meta = reg[component_id]
+        if meta.get("enabled") is False:
+            return False
+
+        # Check if already loaded
+        comp = self.get_component(component_id)
+        if comp is not None:
+            # Already loaded, check if running
+            from lucid_component_base import ComponentStatus
+            if hasattr(comp, "state") and comp.state.status == ComponentStatus.RUNNING:
+                logger.info("Component %s already running", component_id)
+                # Still resubscribe in case subscriptions were removed
+                self._subscribe_component_topics(comp, component_id)
+                return True
+            # Try to start it
+            try:
+                comp.start()
+                logger.info("Started component: %s", component_id)
+                # Subscribe to component topics
+                self._subscribe_component_topics(comp, component_id)
+                return True
+            except Exception as exc:
+                logger.exception("Failed to start component %s: %s", component_id, exc)
+                return False
+
+        # Component not loaded - would need to load it, but that's complex
+        # For now, return False and require restart
+        logger.warning("Component %s not loaded; restart agent to load disabled components", component_id)
+        return False
+
+    def _subscribe_component_topics(self, comp: Any, component_id: str) -> None:
+        """Subscribe to a single component's command topics. Internal helper."""
+        if not self._client or not self._client.is_connected():
+            return
+        
+        cmd_actions = [
+            ("reset", "on_cmd_reset", self.topics.component_cmd_reset),
+            ("ping", "on_cmd_ping", self.topics.component_cmd_ping),
+        ]
+        for action, method_name, topic_fn in cmd_actions:
+            method = getattr(comp, method_name, None)
+            if not callable(method):
+                continue
+            topic = topic_fn(component_id)
+            if topic not in self._handlers:
+                self._handlers[topic] = lambda p, m=method: m(p)
+                self._client.subscribe(topic, qos=1)
+                logger.info("Subscribed: %s", topic)
+
+        # cmd/cfg/set → Component.on_cmd_cfg_set(...)
+        on_cfg_set = getattr(comp, "on_cmd_cfg_set", None)
+        if callable(on_cfg_set):
+            cfg_set_topic = self.topics.component_cmd_cfg_set(component_id)
+            if cfg_set_topic not in self._handlers:
+                self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
+                self._client.subscribe(cfg_set_topic, qos=1)
+                logger.info("Subscribed: %s", cfg_set_topic)
+
+        # Telemetry config: cfg/telemetry → Component.set_telemetry_config(...)
+        set_cfg = getattr(comp, "set_telemetry_config", None)
+        if callable(set_cfg):
+            cfg_topic = f"{self.topics.component_base(component_id)}/cfg/telemetry"
+            if cfg_topic not in self._handlers:
+                import json
+                def _handle_cfg_telemetry(payload_str: str, setter=set_cfg, topic=cfg_topic) -> None:
+                    try:
+                        cfg = json.loads(payload_str) if payload_str else {}
+                        if not isinstance(cfg, dict):
+                            logger.warning("Ignoring non-object cfg/telemetry payload on %s", topic)
+                            return
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to decode cfg/telemetry payload on %s", topic)
+                        return
+                    try:
+                        setter(cfg)
+                        logger.info("Applied telemetry config for component %s from %s", component_id, topic)
+                    except Exception as exc:
+                        logger.exception("Failed to apply telemetry config for component %s: %s", component_id, exc)
                 self._handlers[cfg_topic] = _handle_cfg_telemetry
                 self._client.subscribe(cfg_topic, qos=1)
                 logger.info("Subscribed: %s", cfg_topic)

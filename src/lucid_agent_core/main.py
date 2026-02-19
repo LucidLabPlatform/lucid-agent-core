@@ -117,6 +117,7 @@ def run_agent() -> int:
         agent_id=cfg.agent_username,
         agent_version=cfg.agent_version,
         config_store=config_store,
+        component_manager=agent,  # AgentMQTTClient implements ComponentManager
     )
 
     # 4. Set context BEFORE connect

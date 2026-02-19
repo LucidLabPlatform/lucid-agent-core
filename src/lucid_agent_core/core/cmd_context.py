@@ -36,6 +36,14 @@ class ConfigStore(Protocol):
         ...
 
 
+class ComponentManager(Protocol):
+    """Protocol for component lifecycle management."""
+
+    def get_component(self, component_id: str) -> Optional[Any]: ...
+    def stop_component(self, component_id: str) -> bool: ...
+    def start_component(self, component_id: str, registry: dict[str, dict]) -> bool: ...
+
+
 @dataclass
 class CoreCommandContext:
     """
@@ -48,6 +56,7 @@ class CoreCommandContext:
     agent_id: str
     agent_version: str
     config_store: ConfigStore
+    component_manager: Optional[ComponentManager] = None
 
     def publish(
         self, topic: str, payload: dict[str, Any], *, retain: bool = False, qos: int = 1
