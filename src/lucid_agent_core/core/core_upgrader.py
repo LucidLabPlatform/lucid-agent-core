@@ -36,22 +36,41 @@ class ValidationError(ValueError):
     """Raised when upgrade payload validation fails."""
 
 
+# GitHub release configuration for core
+CORE_GITHUB_OWNER = "LucidLabPlatform"
+CORE_GITHUB_REPO = "lucid-agent-core"
+CORE_PACKAGE_NAME = "lucid-agent-core"
+
+
 @dataclass(frozen=True, slots=True)
 class UpgradeRequest:
     request_id: str
+    release_type: str
     version: str
-    wheel_url: str
     sha256: str
 
     def validate(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id:
             raise ValidationError("request_id must be a non-empty string")
+        if self.release_type != "github_release":
+            raise ValidationError('release_type must be "github_release"')
         if not isinstance(self.version, str) or not _SEMVER_RE.fullmatch(self.version):
             raise ValidationError("version must be semver like 1.2.3")
-        if not isinstance(self.wheel_url, str) or not self.wheel_url.startswith("https://github.com/"):
-            raise ValidationError("wheel_url must be a GitHub release URL")
         if not isinstance(self.sha256, str) or not _SHA256_RE.fullmatch(self.sha256):
             raise ValidationError("sha256 must be 64 hex chars")
+
+    @property
+    def wheel_filename(self) -> str:
+        """Derive wheel filename from package name and version."""
+        return f"{CORE_PACKAGE_NAME}-{self.version}-py3-none-any.whl"
+
+    @property
+    def wheel_url(self) -> str:
+        """Construct wheel URL from release_type, owner, repo, tag, and wheel filename."""
+        if self.release_type != "github_release":
+            raise ValidationError(f"unsupported release_type: {self.release_type}")
+        tag = f"v{self.version}"
+        return f"https://github.com/{CORE_GITHUB_OWNER}/{CORE_GITHUB_REPO}/releases/download/{tag}/{self.wheel_filename}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,14 +97,14 @@ def _parse_and_validate(raw_payload: str) -> UpgradeRequest:
         raise ValidationError("payload must be a dict")
 
     request_id = obj.get("request_id", "")
+    release_type = obj.get("release_type", "github_release")  # Default to github_release
     version = obj.get("version", "")
-    wheel_url = obj.get("wheel_url", "")
     sha256 = obj.get("sha256", "")
 
     req = UpgradeRequest(
         request_id=request_id,
+        release_type=release_type,
         version=version,
-        wheel_url=wheel_url,
         sha256=sha256,
     )
     req.validate()

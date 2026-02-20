@@ -39,21 +39,46 @@ class ValidationError(ValueError):
 class ComponentUpgradeRequest:
     request_id: str
     component_id: str
+    release_type: str
     version: str
-    wheel_url: str
     sha256: str
+    owner: str  # From registry
+    repo: str  # From registry
+    dist_name: str  # From registry
 
     def validate(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id:
             raise ValidationError("request_id must be a non-empty string")
         if not isinstance(self.component_id, str) or not _COMPONENT_ID_RE.fullmatch(self.component_id):
             raise ValidationError(f"component_id must match ^[a-z0-9_]+$: {self.component_id}")
+        if self.release_type != "github_release":
+            raise ValidationError('release_type must be "github_release"')
         if not isinstance(self.version, str) or not _SEMVER_RE.fullmatch(self.version):
             raise ValidationError("version must be semver like 1.2.3")
-        if not isinstance(self.wheel_url, str) or not self.wheel_url.startswith("https://github.com/"):
-            raise ValidationError("wheel_url must be a GitHub release URL")
         if not isinstance(self.sha256, str) or not _SHA256_RE.fullmatch(self.sha256):
             raise ValidationError("sha256 must be 64 hex chars")
+        if not isinstance(self.owner, str) or not self.owner:
+            raise ValidationError("owner must be a non-empty string")
+        if not isinstance(self.repo, str) or not self.repo:
+            raise ValidationError("repo must be a non-empty string")
+        if not isinstance(self.dist_name, str) or not self.dist_name:
+            raise ValidationError("dist_name must be a non-empty string")
+
+    @property
+    def wheel_filename(self) -> str:
+        """Derive wheel filename from dist_name and version."""
+        # Convert dist_name (e.g., "lucid-component-fixture-cpu") to wheel format
+        # Wheel format: underscores instead of hyphens
+        wheel_name = self.dist_name.replace("-", "_")
+        return f"{wheel_name}-{self.version}-py3-none-any.whl"
+
+    @property
+    def wheel_url(self) -> str:
+        """Construct wheel URL from release_type, owner, repo, tag, and wheel filename."""
+        if self.release_type != "github_release":
+            raise ValidationError(f"unsupported release_type: {self.release_type}")
+        tag = f"v{self.version}"
+        return f"https://github.com/{self.owner}/{self.repo}/releases/download/{tag}/{self.wheel_filename}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +97,11 @@ class ComponentUpgradeResult:
 
 
 def _parse_and_validate(raw_payload: str) -> ComponentUpgradeRequest:
+    """
+    Parse and validate upgrade payload, then enrich with registry data.
+    Payload: { request_id, component_id, release_type, version, sha256 }
+    Registry provides: owner, repo, dist_name
+    """
     try:
         obj = json.loads(raw_payload) if raw_payload else {}
     except json.JSONDecodeError as exc:
@@ -82,16 +112,34 @@ def _parse_and_validate(raw_payload: str) -> ComponentUpgradeRequest:
 
     request_id = obj.get("request_id", "")
     component_id = obj.get("component_id", "")
+    release_type = obj.get("release_type", "github_release")  # Default to github_release
     version = obj.get("version", "")
-    wheel_url = obj.get("wheel_url", "")
     sha256 = obj.get("sha256", "")
+
+    # Load registry to get owner, repo, dist_name
+    registry = load_registry()
+    if component_id not in registry:
+        raise ValidationError(f"component not found in registry: {component_id}")
+
+    component_info = registry[component_id]
+    repo_str = component_info.get("repo", "")
+    if not repo_str or "/" not in repo_str:
+        raise ValidationError(f"invalid repo format in registry for {component_id}: {repo_str}")
+    
+    owner, repo = repo_str.split("/", 1)
+    dist_name = component_info.get("dist_name", "")
+    if not dist_name:
+        raise ValidationError(f"dist_name not found in registry for {component_id}")
 
     req = ComponentUpgradeRequest(
         request_id=request_id,
         component_id=component_id,
+        release_type=release_type,
         version=version,
-        wheel_url=wheel_url,
         sha256=sha256,
+        owner=owner,
+        repo=repo,
+        dist_name=dist_name,
     )
     req.validate()
     return req
@@ -196,36 +244,20 @@ def handle_component_upgrade(raw_payload: str) -> ComponentUpgradeResult:
             restart_required=True,
         )
 
-    # Check component exists in registry
-    registry = load_registry()
-    if req.component_id not in registry:
-        return ComponentUpgradeResult(
-            request_id=req.request_id,
-            component_id=req.component_id,
-            version=req.version,
-            ok=False,
-            ts=ts,
-            error=f"component not found in registry: {req.component_id}",
-            restart_required=False,
-        )
-
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            wheel_filename = req.wheel_url.split("/")[-1]
+            wheel_filename = req.wheel_filename
             wheel_path = Path(tmp) / wheel_filename
             _download_with_limits(req.wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES)
             _verify_sha256(wheel_path, expected=req.sha256)
             pip_out, pip_err = _pip_upgrade(wheel_path)
 
-        # Extract dist_name from wheel filename for registry
-        dist_name = _extract_dist_name_from_wheel(wheel_filename)
-
         # Update registry with new version
+        registry = load_registry()
         registry[req.component_id]["version"] = req.version
         registry[req.component_id]["wheel_url"] = req.wheel_url
         registry[req.component_id]["sha256"] = req.sha256.lower()
-        registry[req.component_id]["dist_name"] = dist_name
-        # Keep existing entrypoint and other fields
+        # Keep existing dist_name, entrypoint and other fields
         write_registry(registry)
 
         return ComponentUpgradeResult(
