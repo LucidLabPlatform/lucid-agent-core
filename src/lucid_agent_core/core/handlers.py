@@ -55,10 +55,23 @@ def on_restart(ctx: CoreCommandContext, payload_str: str) -> None:
         logger.info("Restart requested for request_id=%s", request_id)
 
 
+def _publish_component_metadata(ctx: CoreCommandContext, component_id: str, version: str) -> None:
+    """Publish retained metadata for one component (version from registry; capabilities from loaded component if any)."""
+    meta = {"component_id": component_id, "version": version, "capabilities": []}
+    if ctx.component_manager:
+        comp = ctx.component_manager.get_component(component_id)
+        if comp and hasattr(comp, "capabilities") and callable(comp.capabilities):
+            meta["capabilities"] = comp.capabilities()
+    try:
+        ctx.publish(ctx.topics.component_metadata(component_id), meta, retain=True, qos=1)
+    except Exception as exc:
+        logger.warning("Failed to publish component metadata for %s: %s", component_id, exc)
+
+
 def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/refresh → evt/refresh/result.
-    Republish retained topics that are not always updated: metadata, status, state, cfg.
+    Republish retained topics that are not always updated: metadata, status, state, cfg, and each component metadata.
     """
     request_id = _request_id(payload_str)
     try:
@@ -73,6 +86,9 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
             ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
             cfg = ctx.config_store.get_cached()
             ctx.publish(ctx.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
+        # Republish each component's metadata topic so version/capabilities stay in sync with registry
+        for cid, meta in registry.items():
+            _publish_component_metadata(ctx, cid, meta.get("version", "?"))
         ctx.publish_result("refresh", request_id, ok=True, error=None)
         logger.info("Refresh completed for request_id=%s", request_id)
     except Exception as exc:
@@ -363,24 +379,9 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
 
         # After successful upgrade, republish component metadata with new version so it updates immediately
-        if result.ok and ctx.component_manager:
-            comp = ctx.component_manager.get_component(result.component_id)
-            if comp:
-                meta = {"component_id": result.component_id, "version": result.version}
-                if hasattr(comp, "capabilities") and callable(comp.capabilities):
-                    meta["capabilities"] = comp.capabilities()
-                else:
-                    meta["capabilities"] = []
-                try:
-                    ctx.publish(
-                        ctx.topics.component_metadata(result.component_id),
-                        meta,
-                        retain=True,
-                        qos=1,
-                    )
-                    logger.info("Republished component metadata with version %s", result.version)
-                except Exception as exc:
-                    logger.warning("Failed to republish component metadata: %s", exc)
+        if result.ok:
+            _publish_component_metadata(ctx, result.component_id, result.version)
+            logger.info("Republished component metadata with version %s", result.version)
 
         logger.info(
             "Component upgrade result: ok=%s component=%s version=%s restart=%s",
