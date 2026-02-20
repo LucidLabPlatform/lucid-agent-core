@@ -39,7 +39,7 @@ class ValidationError(ValueError):
 # GitHub release configuration for core
 CORE_GITHUB_OWNER = "LucidLabPlatform"
 CORE_GITHUB_REPO = "lucid-agent-core"
-CORE_PACKAGE_NAME = "lucid-agent-core"
+CORE_PACKAGE_NAME = "lucid_agent_core"
 
 
 @dataclass(frozen=True, slots=True)
