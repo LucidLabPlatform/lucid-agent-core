@@ -24,6 +24,7 @@ ALLOWED_KEYS = {
     "telemetry": dict,  # Nested: {enabled, metrics, interval_s, change_threshold_percent}
     "heartbeat_s": int,
     "log_level": str,
+    "logs_enabled": bool,
 }
 
 # Validation constraints
@@ -221,6 +222,10 @@ class ConfigStore:
             if key == "heartbeat_s":
                 if not (MIN_HEARTBEAT <= value <= MAX_HEARTBEAT):
                     return False, f"heartbeat_s must be between {MIN_HEARTBEAT} and {MAX_HEARTBEAT}"
+            
+            if key == "logs_enabled":
+                if not isinstance(value, bool):
+                    return False, "logs_enabled must be boolean"
 
             if key == "log_level":
                 if value not in VALID_LOG_LEVELS:

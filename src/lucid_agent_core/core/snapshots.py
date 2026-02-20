@@ -144,4 +144,8 @@ def build_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     if "log_level" not in result:
         result["log_level"] = "INFO"
     
+    # Always include logs_enabled with default if missing
+    if "logs_enabled" not in result:
+        result["logs_enabled"] = False
+    
     return result

@@ -96,7 +96,27 @@ class AgentMQTTClient:
         """Set command context and build agent command handlers. Call before connect()."""
         self._ctx = ctx
         self._build_handlers()
+        self._setup_mqtt_logging()
         logger.info("Context set, handlers built")
+    
+    def _setup_mqtt_logging(self) -> None:
+        """Set up MQTT logging handler for core logs."""
+        try:
+            from lucid_agent_core.core.mqtt_log_handler import MQTTLogHandler
+            
+            # Only add handler if not already added
+            root_logger = logging.getLogger()
+            for handler in root_logger.handlers:
+                if isinstance(handler, MQTTLogHandler) and handler.topic == self.topics.logs():
+                    return  # Already added
+            
+            # Create and add handler
+            handler = MQTTLogHandler(self, self.topics.logs())
+            handler.setLevel(logging.DEBUG)  # Handler level, actual filtering done by logger level
+            root_logger.addHandler(handler)
+            logger.info("MQTT logging handler added for core logs")
+        except Exception as exc:
+            logger.warning("Failed to set up MQTT logging: %s", exc)
 
     def _build_handlers(self) -> None:
         if not self._ctx:
