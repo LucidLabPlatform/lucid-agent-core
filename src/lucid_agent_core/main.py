@@ -153,12 +153,10 @@ def run_agent() -> int:
 
     # Load registry for component state and gating
     from lucid_agent_core.components.registry import load_registry
+    from lucid_agent_core.core.snapshots import build_components_list
     registry = load_registry()
     
-    components_list = [
-        {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-        for cid, meta in registry.items()
-    ]
+    components_list = build_components_list(registry, components=components)
     agent.add_component_handlers(components, registry)
     agent.publish_retained_state(components_list)
 

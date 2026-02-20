@@ -63,14 +63,11 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
     request_id = _request_id(payload_str)
     try:
         registry = load_registry()
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", ""), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list, build_metadata, build_state, build_cfg
+        components_list = build_components_list(registry, ctx.component_manager)
         if hasattr(ctx.mqtt, "publish_retained_refresh"):
             ctx.mqtt.publish_retained_refresh(components_list)
         else:
-            from lucid_agent_core.core.snapshots import build_metadata, build_state, build_cfg
             state = build_state(components_list)
             ctx.publish(ctx.topics.metadata(), build_metadata(ctx.agent_id, ctx.agent_version), retain=True, qos=1)
             ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
@@ -104,10 +101,8 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
         
         # Update retained state
         registry = load_registry()
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list
+        components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
         
@@ -158,10 +153,8 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
         
         # Update retained state
         registry = load_registry()
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list
+        components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
         
@@ -232,10 +225,8 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
             logger.warning("Component %s enable: component_manager not available", component_id)
         
         # Republish state
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list
+        components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
         
@@ -293,10 +284,8 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
         write_registry(registry)
         
         # Republish state
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list
+        components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
         
@@ -364,10 +353,8 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
 
         # Update retained state
         registry = load_registry()
-        components_list = [
-            {"component_id": cid, "version": meta.get("version", "?"), "enabled": meta.get("enabled", True)}
-            for cid, meta in registry.items()
-        ]
+        from lucid_agent_core.core.snapshots import build_components_list
+        components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
 

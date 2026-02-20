@@ -216,6 +216,13 @@ class AgentMQTTClient:
         try:
             comp.stop()
             logger.info("Stopped component: %s", component_id)
+            # Republish all retained topics to ensure status and state are updated
+            if hasattr(comp, "_publish_all_retained"):
+                try:
+                    comp._publish_all_retained()
+                    logger.info("Republished retained topics for stopped component: %s", component_id)
+                except Exception as exc:
+                    logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
         except Exception as exc:
             logger.exception("Failed to stop component %s: %s", component_id, exc)
             return False
@@ -290,6 +297,13 @@ class AgentMQTTClient:
                     logger.info("Successfully started component: %s", component_id)
                     # Subscribe to component topics
                     self._subscribe_component_topics(comp, component_id)
+                    # Republish all retained topics to ensure status and state are updated
+                    if hasattr(comp, "_publish_all_retained"):
+                        try:
+                            comp._publish_all_retained()
+                            logger.info("Republished retained topics for component: %s", component_id)
+                        except Exception as exc:
+                            logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
                     return True
                 except Exception as exc:
                     logger.exception("Failed to start component %s: %s", component_id, exc)

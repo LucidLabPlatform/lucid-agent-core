@@ -77,6 +77,34 @@ def _system_disk_percent() -> float:
         return 0.0
 
 
+def build_components_list(
+    registry: dict[str, dict[str, Any]],
+    component_manager: Any | None = None,
+    components: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build components list for state topic.
+    
+    Args:
+        registry: Component registry dict {component_id: {enabled, version, ...}}
+        component_manager: Optional (unused, kept for compatibility)
+        components: Optional (unused, kept for compatibility)
+        
+    Returns:
+        List of component dicts: [{component_id, version, enabled}]
+    """
+    components_list = []
+    for cid, meta in registry.items():
+        comp_dict = {
+            "component_id": cid,
+            "version": meta.get("version", "?"),
+            "enabled": meta.get("enabled", True),
+        }
+        components_list.append(comp_dict)
+    
+    return components_list
+
+
 def build_state(
     components_list: list[dict[str, Any]],
 ) -> dict[str, Any]:

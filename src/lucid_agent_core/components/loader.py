@@ -69,12 +69,8 @@ def load_components(
             continue
 
         enabled = meta.get("enabled", True)
-        if enabled is False:
-            clog.info("disabled; skipping")
-            results.append(ComponentLoadResult(component_id=component_id, ok=True, entrypoint=entrypoint))
-            continue
-
-        auto_start = meta.get("auto_start", True)
+        # Always load components, but only start them if enabled
+        auto_start = meta.get("auto_start", True) and enabled
 
         try:
             module_path, class_name = _parse_entrypoint(entrypoint)
@@ -108,7 +104,10 @@ def load_components(
                     started=started,
                 )
             )
-            clog.info("loaded (auto_start=%s)", auto_start)
+            if enabled is False:
+                clog.info("loaded but disabled (not started)")
+            else:
+                clog.info("loaded (auto_start=%s)", auto_start)
 
         except Exception as exc:
             clog.exception("failed to load (entrypoint=%s)", entrypoint)
