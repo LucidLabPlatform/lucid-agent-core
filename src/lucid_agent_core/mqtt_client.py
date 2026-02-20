@@ -466,11 +466,16 @@ class AgentMQTTClient:
                 continue
             
             try:
-                cfg = self._ctx.config_store.get_cached()
+                # Use build_cfg() to ensure defaults are applied
+                from lucid_agent_core.core.snapshots import build_cfg
+                raw_cfg = self._ctx.config_store.get_cached()
+                cfg = build_cfg(raw_cfg)
+                
                 telemetry_cfg = cfg.get("telemetry", {})
                 metrics_cfg = telemetry_cfg.get("metrics", {})
                 
                 if not metrics_cfg:
+                    logger.debug("Telemetry loop: no metrics config found, waiting...")
                     if self._telemetry_stop_event.wait(timeout=2.0):
                         break
                     continue
@@ -489,11 +494,14 @@ class AgentMQTTClient:
                 }
                 
                 # Publish telemetry for each enabled metric
+                published_count = 0
                 for metric_name, metric_cfg in metrics_cfg.items():
                     if not isinstance(metric_cfg, dict):
+                        logger.debug("Telemetry loop: skipping %s (not a dict)", metric_name)
                         continue
                     
                     if metric_name not in state_values:
+                        logger.debug("Telemetry loop: skipping %s (not in state_values)", metric_name)
                         continue
                     
                     value = state_values[metric_name]
@@ -503,9 +511,16 @@ class AgentMQTTClient:
                             payload = json.dumps({"value": value})
                             self._client.publish(topic, payload, qos=0, retain=False)
                             self._telemetry_last[metric_name] = (value, time.time())
-                            logger.debug("Published telemetry: %s = %s", metric_name, value)
+                            published_count += 1
+                            logger.info("Published telemetry: %s = %.2f", metric_name, value)
                         except Exception as exc:
                             logger.warning("Failed to publish telemetry %s: %s", metric_name, exc)
+                    else:
+                        logger.debug("Telemetry loop: skipping %s (should_publish returned False, enabled=%s)", 
+                                   metric_name, metric_cfg.get("enabled", False))
+                
+                if published_count == 0:
+                    logger.debug("Telemetry loop: no metrics published this cycle")
                 
                 # Sleep for minimum interval (check configs more frequently)
                 if self._telemetry_stop_event.wait(timeout=1.0):
@@ -520,6 +535,19 @@ class AgentMQTTClient:
         """Start telemetry publishing thread if not already running."""
         if self._telemetry_thread:
             return
+        
+        # Log current telemetry config state
+        if self._ctx:
+            from lucid_agent_core.core.snapshots import build_cfg
+            raw_cfg = self._ctx.config_store.get_cached()
+            cfg = build_cfg(raw_cfg)
+            telemetry_cfg = cfg.get("telemetry", {})
+            metrics_cfg = telemetry_cfg.get("metrics", {})
+            enabled_metrics = [name for name, mcfg in metrics_cfg.items() 
+                             if isinstance(mcfg, dict) and mcfg.get("enabled", False)]
+            logger.info("Starting telemetry thread. Enabled metrics: %s (total metrics: %d)", 
+                       enabled_metrics if enabled_metrics else "none", len(metrics_cfg))
+        
         self._telemetry_stop_event.clear()
         self._telemetry_thread = threading.Thread(
             target=self._telemetry_loop,
