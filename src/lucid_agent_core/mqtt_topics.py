@@ -132,6 +132,9 @@ class TopicSchema:
         _validate_component_id(component_id)
         return f"{self.base}/components/{component_id}"
 
+    def component_metadata(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/metadata"
+
     def component_cmd_reset(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/cmd/reset"
 

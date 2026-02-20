@@ -351,12 +351,36 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
             qos=1,
         )
 
-        # Update retained state
+        # Update retained state (and component metadata) with new version
         registry = load_registry()
+        if result.ok:
+            # Ensure we use the version we just wrote to the registry
+            registry[result.component_id] = registry.get(result.component_id, {})
+            registry[result.component_id]["version"] = result.version
         from lucid_agent_core.core.snapshots import build_components_list
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
+
+        # After successful upgrade, republish component metadata with new version so it updates immediately
+        if result.ok and ctx.component_manager:
+            comp = ctx.component_manager.get_component(result.component_id)
+            if comp:
+                meta = {"component_id": result.component_id, "version": result.version}
+                if hasattr(comp, "capabilities") and callable(comp.capabilities):
+                    meta["capabilities"] = comp.capabilities()
+                else:
+                    meta["capabilities"] = []
+                try:
+                    ctx.publish(
+                        ctx.topics.component_metadata(result.component_id),
+                        meta,
+                        retain=True,
+                        qos=1,
+                    )
+                    logger.info("Republished component metadata with version %s", result.version)
+                except Exception as exc:
+                    logger.warning("Failed to republish component metadata: %s", exc)
 
         logger.info(
             "Component upgrade result: ok=%s component=%s version=%s restart=%s",
