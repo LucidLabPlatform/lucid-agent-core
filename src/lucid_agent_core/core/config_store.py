@@ -201,17 +201,22 @@ class ConfigStore:
             if key == "telemetry":
                 if not isinstance(value, dict):
                     return False, "telemetry must be a dict"
-                # Validate telemetry structure
-                if "enabled" in value and not isinstance(value["enabled"], bool):
-                    return False, "telemetry.enabled must be boolean"
-                if "metrics" in value and not isinstance(value["metrics"], dict):
-                    return False, "telemetry.metrics must be a dict"
-                if "interval_s" in value:
-                    if not isinstance(value["interval_s"], int) or value["interval_s"] < 1:
-                        return False, "telemetry.interval_s must be integer >= 1"
-                if "change_threshold_percent" in value:
-                    if not isinstance(value["change_threshold_percent"], (int, float)) or value["change_threshold_percent"] < 0:
-                        return False, "telemetry.change_threshold_percent must be number >= 0"
+                # Validate telemetry structure: metrics dict with per-metric configs
+                if "metrics" in value:
+                    if not isinstance(value["metrics"], dict):
+                        return False, "telemetry.metrics must be a dict"
+                    # Validate each metric config
+                    for metric_name, metric_cfg in value["metrics"].items():
+                        if not isinstance(metric_cfg, dict):
+                            return False, f"telemetry.metrics.{metric_name} must be a dict"
+                        if "enabled" in metric_cfg and not isinstance(metric_cfg["enabled"], bool):
+                            return False, f"telemetry.metrics.{metric_name}.enabled must be boolean"
+                        if "interval_s" in metric_cfg:
+                            if not isinstance(metric_cfg["interval_s"], int) or metric_cfg["interval_s"] < 1:
+                                return False, f"telemetry.metrics.{metric_name}.interval_s must be integer >= 1"
+                        if "change_threshold_percent" in metric_cfg:
+                            if not isinstance(metric_cfg["change_threshold_percent"], (int, float)) or metric_cfg["change_threshold_percent"] < 0:
+                                return False, f"telemetry.metrics.{metric_name}.change_threshold_percent must be number >= 0"
 
             if key == "heartbeat_s":
                 if not (MIN_HEARTBEAT <= value <= MAX_HEARTBEAT):
@@ -262,11 +267,24 @@ class ConfigStore:
         current = self.get_cached().copy()
         new_cfg = {**current, **set_dict}
         
-        # Deep merge for nested telemetry config
+        # Deep merge for nested telemetry config (per-metric structure)
         if "telemetry" in set_dict and "telemetry" in current:
-            new_cfg["telemetry"] = {**current["telemetry"], **set_dict["telemetry"]}
+            current_telemetry = current["telemetry"].copy()
+            set_telemetry = set_dict["telemetry"]
+            # Deep merge metrics dict
+            if "metrics" in set_telemetry and "metrics" in current_telemetry:
+                merged_metrics = current_telemetry["metrics"].copy()
+                for metric_name, metric_cfg in set_telemetry["metrics"].items():
+                    if metric_name in merged_metrics:
+                        merged_metrics[metric_name] = {**merged_metrics[metric_name], **metric_cfg}
+                    else:
+                        merged_metrics[metric_name] = metric_cfg.copy()
+                current_telemetry["metrics"] = merged_metrics
+            elif "metrics" in set_telemetry:
+                current_telemetry["metrics"] = set_telemetry["metrics"].copy()
+            new_cfg["telemetry"] = current_telemetry
         elif "telemetry" in set_dict:
-            new_cfg["telemetry"] = set_dict["telemetry"]
+            new_cfg["telemetry"] = set_dict["telemetry"].copy()
 
         # Validate merged config
         ok, error = self.validate(new_cfg)

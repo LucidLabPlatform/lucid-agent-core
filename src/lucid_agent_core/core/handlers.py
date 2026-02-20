@@ -333,6 +333,7 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
         apply_log_level_from_config(new_cfg)
         from lucid_agent_core.core.snapshots import build_cfg
         ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
+        # Telemetry thread will pick up config changes automatically
 
     topic = ctx.topics.evt_result("cfg/set")
     ctx.publish(topic, result, retain=False, qos=1)

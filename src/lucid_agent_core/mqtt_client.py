@@ -86,6 +86,11 @@ class AgentMQTTClient:
         self._hb_stop_event = threading.Event()
         self._hb_interval_lock = threading.Lock()
         self._hb_interval_s = heartbeat_interval_s
+        
+        # Telemetry tracking
+        self._telemetry_thread: Optional[threading.Thread] = None
+        self._telemetry_stop_event = threading.Event()
+        self._telemetry_last: dict[str, tuple[Any, float]] = {}  # metric -> (value, last_publish_ts)
 
     def set_context(self, ctx: Any) -> None:
         """Set command context and build agent command handlers. Call before connect()."""
@@ -402,6 +407,119 @@ class AgentMQTTClient:
                 except Exception as exc:
                     logger.error("Heartbeat publish failed: %s", exc)
 
+    def _should_publish_telemetry(self, metric: str, value: Any, metric_cfg: dict[str, Any]) -> bool:
+        """
+        Check if telemetry should be published for a metric based on its config.
+        Returns True if enabled and (delta > threshold or interval exceeded).
+        """
+        if not metric_cfg.get("enabled", False):
+            return False
+        
+        interval_s = max(1, metric_cfg.get("interval_s", 2))
+        threshold = max(0.0, metric_cfg.get("change_threshold_percent", 2.0))
+        now = time.time()
+        last = self._telemetry_last.get(metric)
+        
+        if last is None:
+            return True
+        
+        last_value, last_ts = last
+        if now - last_ts >= interval_s:
+            return True
+        
+        try:
+            if isinstance(last_value, (int, float)) and isinstance(value, (int, float)):
+                if last_value == 0:
+                    return value != 0
+                delta_pct = abs(value - last_value) / abs(last_value) * 100.0
+                return delta_pct >= threshold
+        except TypeError:
+            pass
+        return value != last_value
+
+    def _telemetry_loop(self) -> None:
+        """Publish core telemetry streams based on cfg.telemetry.metrics config."""
+        while not self._telemetry_stop_event.is_set():
+            if not self._ctx or not self._client or not self._client.is_connected():
+                if self._telemetry_stop_event.wait(timeout=1.0):
+                    break
+                continue
+            
+            try:
+                cfg = self._ctx.config_store.get_cached()
+                telemetry_cfg = cfg.get("telemetry", {})
+                metrics_cfg = telemetry_cfg.get("metrics", {})
+                
+                if not metrics_cfg:
+                    if self._telemetry_stop_event.wait(timeout=2.0):
+                        break
+                    continue
+                
+                # Get current state values
+                from lucid_agent_core.core.snapshots import (
+                    _system_cpu_percent,
+                    _system_memory_percent,
+                    _system_disk_percent,
+                )
+                
+                state_values = {
+                    "cpu_percent": _system_cpu_percent(),
+                    "memory_percent": _system_memory_percent(),
+                    "disk_percent": _system_disk_percent(),
+                }
+                
+                # Publish telemetry for each enabled metric
+                for metric_name, metric_cfg in metrics_cfg.items():
+                    if not isinstance(metric_cfg, dict):
+                        continue
+                    
+                    if metric_name not in state_values:
+                        continue
+                    
+                    value = state_values[metric_name]
+                    if self._should_publish_telemetry(metric_name, value, metric_cfg):
+                        try:
+                            topic = self.topics.telemetry(metric_name)
+                            payload = json.dumps({"value": value})
+                            self._client.publish(topic, payload, qos=0, retain=False)
+                            self._telemetry_last[metric_name] = (value, time.time())
+                            logger.debug("Published telemetry: %s = %s", metric_name, value)
+                        except Exception as exc:
+                            logger.warning("Failed to publish telemetry %s: %s", metric_name, exc)
+                
+                # Sleep for minimum interval (check configs more frequently)
+                if self._telemetry_stop_event.wait(timeout=1.0):
+                    break
+                    
+            except Exception as exc:
+                logger.exception("Telemetry loop error: %s", exc)
+                if self._telemetry_stop_event.wait(timeout=2.0):
+                    break
+
+    def _start_telemetry(self) -> None:
+        """Start telemetry publishing thread if not already running."""
+        if self._telemetry_thread:
+            return
+        self._telemetry_stop_event.clear()
+        self._telemetry_thread = threading.Thread(
+            target=self._telemetry_loop,
+            name="LucidCoreTelemetry",
+            daemon=True,
+        )
+        self._telemetry_thread.start()
+        logger.info("Started core telemetry thread")
+
+    def _stop_telemetry(self) -> None:
+        """Stop telemetry publishing thread."""
+        if not self._telemetry_thread:
+            return
+        self._telemetry_stop_event.set()
+        self._telemetry_thread.join(timeout=2.0)
+        if self._telemetry_thread.is_alive():
+            logger.warning("Telemetry thread did not stop within timeout")
+        self._telemetry_thread = None
+        logger.info("Stopped core telemetry thread")
+
     def _publish_status(self, state: str) -> None:
         if not self._client:
             return
@@ -471,11 +589,15 @@ class AgentMQTTClient:
             interval = self._hb_interval_s
         if interval > 0:
             self._start_heartbeat()
+        
+        # Start telemetry thread
+        self._start_telemetry()
 
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, rc: int) -> None:
         if rc != 0:
             logger.warning("Unexpected disconnect rc=%s", rc)
         self._stop_heartbeat()
+        self._stop_telemetry()
 
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
         handler = self._handlers.get(msg.topic)
@@ -534,6 +656,7 @@ class AgentMQTTClient:
             return
         try:
             self._stop_heartbeat()
+            self._stop_telemetry()
             self._publish_status("offline")
             self._client.loop_stop()
             self._client.disconnect()
