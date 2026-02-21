@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lucid-agent-core"
 dynamic = ["version"]
-description = "LUCID Phase 1 agent-core: MQTT connectivity + online/offline status (LWT + heartbeat)."
+description = "LUCID agent runtime: MQTT broker connection, retained metadata/status/state/cfg, log and telemetry streaming, component loading and command handling."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

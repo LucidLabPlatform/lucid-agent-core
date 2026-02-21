@@ -1,6 +1,12 @@
 # LUCID Agent Core
 
-`lucid-agent-core` is the MQTT runtime agent for LUCID. It connects to a broker, publishes retained online/offline status with LWT, subscribes to component install commands, and loads components from the registry.
+MQTT runtime agent for LUCID: connects to a broker, publishes retained metadata/status/state/cfg, streams logs and telemetry when enabled, and loads components from the registry. Single entrypoint: `lucid-agent-core run` (interactive) or systemd service.
+
+---
+
+## Versioning
+
+Version is derived from Git tags via [setuptools_scm](https://github.com/pypa/setuptools_scm). Tag releases as `v1.2.3`; the package version becomes `1.2.3`.
 
 ## Quick Start
 
@@ -16,7 +22,7 @@ make setup        # Create .env from env.example
 make setup-venv   # Create .venv and install project
 ```
 
-Edit `.env` and set `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`.
+Edit `.env` and set `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD`. Optionally set `AGENT_HEARTBEAT` (seconds; 0 = disabled) and `LUCID_LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR).
 
 ### Run locally
 
@@ -26,38 +32,59 @@ make dev
 
 ## MQTT Contract (v1.0.0)
 
-### Publishes
-- `lucid/agents/<agent_username>/status` (retained, QoS 1)
+Unified topics under `lucid/agents/<agent_username>/`. No `core/` nesting.
 
-Status payload:
-```json
-{
-  "state": "online",
-  "ts": "2026-02-09T16:30:50.123456+00:00",
-  "version": "1.0.0"
-}
+### Agent publishes (retained)
+- `metadata`, `status`, `state`, `cfg` (cfg includes `telemetry`, `heartbeat_s`, `log_level`, `logs_enabled`)
+
+### Agent streams (when enabled)
+- `logs` (batched; gated by `cfg.logs_enabled`)
+- `telemetry/<metric>` (e.g. `cpu_percent`, `memory_percent`, `disk_percent`; gated by `cfg.telemetry.metrics.<metric>.enabled`)
+
+### Agent subscribes (commands)
+- `cmd/ping`, `cmd/restart`, `cmd/refresh`, `cmd/cfg/set`
+- `cmd/components/install`, `cmd/components/uninstall`, `cmd/components/enable`, `cmd/components/disable`, `cmd/components/upgrade`
+- `cmd/core/upgrade`
+- Per-component: `components/<component_id>/cmd/reset`, `cmd/ping`, `cmd/cfg/set`
+
+See [MQTT_CONTRACT_V1.md](../MQTT_CONTRACT_V1.md) in the repo root for full topic list and payload contracts.
+
+## Environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MQTT_HOST` | Yes | MQTT broker hostname. |
+| `MQTT_PORT` | Yes | MQTT broker port (1–65535). |
+| `AGENT_USERNAME` | Yes | Agent identity (topic prefix). |
+| `AGENT_PASSWORD` | Yes | MQTT password. |
+| `AGENT_HEARTBEAT` | No | Seconds between retained status refresh; default `0` (disabled). |
+| `LUCID_LOG_LEVEL` | No | Startup log level (DEBUG, INFO, WARNING, ERROR). Overridable via MQTT `cmd/cfg/set`. |
+| `LUCID_AGENT_CORE_WHEEL` | No | Path to local wheel for install/upgrade (skips download). |
+| `LUCID_AGENT_BASE_DIR` | No | Override base dir for agent files (default `/home/lucid/lucid-agent-core`). For testing. |
+
+## System service install (Linux, systemd)
+
+```bash
+sudo lucid-agent-core install-service
 ```
 
-### Subscribes
-- `lucid/agents/<agent_username>/core/cmd/components/install` (QoS 1)
+Creates user `lucid`, `/home/lucid/lucid-agent-core/` (venv, agent-core.env, data, logs, run), and systemd unit. Edit `agent-core.env` with `MQTT_HOST`, `MQTT_PORT`, `AGENT_USERNAME`, `AGENT_PASSWORD` before first run. Optional: `--wheel PATH` or `LUCID_AGENT_CORE_WHEEL` for local wheel install.
 
-Install command payload (JSON):
-```json
-{
-  "request_id": "req-1",
-  "component_id": "cpu",
-  "version": "1.0.0",
-  "entrypoint": "lucid_agent_cpu.component:CpuComponent",
-  "source": {
-    "type": "github_release",
-    "owner": "LucidLabPlatform",
-    "repo": "lucid-agent-cpu",
-    "tag": "v1.0.0",
-    "asset": "lucid_agent_cpu-1.0.0-py3-none-any.whl",
-    "sha256": "<64-hex-chars>"
-  }
-}
+```bash
+sudo systemctl start lucid-agent-core
+sudo systemctl status lucid-agent-core
 ```
+
+Component registry: `/home/lucid/lucid-agent-core/data/components_registry.json`. Logs: `journalctl -u lucid-agent-core -f`.
+
+## Troubleshooting
+
+- **MQTT connection failed**: Check broker, credentials in env, network/firewall.
+- **Component load errors**: Inspect registry and logs.
+
+## Documentation
+
+Full topic and payload details: [MQTT_CONTRACT_V1.md](../MQTT_CONTRACT_V1.md). Smoke tests, migration, verification: [docs/](../docs/) in the repo root.
 
 ## Build and Test
 
@@ -67,7 +94,3 @@ make test-coverage  # With coverage report
 make setup-venv     # One-time
 make build          # Build wheel and sdist
 ```
-
-## Operator Guide
-
-See [docs/RELEASE_USAGE.md](docs/RELEASE_USAGE.md) for service install, troubleshooting, and day-2 operations.

@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 from urllib.request import Request, urlopen
 
+try:
+    from importlib.metadata import version as _pkg_version
+    _AGENT_VERSION = _pkg_version("lucid-agent-core")
+except Exception:  # PackageNotFoundError or missing metadata
+    _AGENT_VERSION = "0.0.0"
+
 from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
 from lucid_agent_core.paths import get_paths
 
@@ -245,7 +251,7 @@ def _parse_and_validate(raw_payload: str) -> InstallRequest:
 
 
 def _download_with_limits(url: str, out_path: Path, *, timeout_s: int, max_bytes: int) -> None:
-    req = Request(url, headers={"User-Agent": "lucid-agent-core/1.0.0"})
+    req = Request(url, headers={"User-Agent": f"lucid-agent-core/{_AGENT_VERSION}"})
     read = 0
     with urlopen(req, timeout=timeout_s) as resp, out_path.open("wb") as f:
         while True:
