@@ -67,8 +67,9 @@ def test_connect_sets_lwt_and_starts_loop(client, fake_paho_client):
     assert kwargs["qos"] == 1
     obj = json.loads(payload)
     assert obj["state"] == "offline"
-    assert "connected_since_ts" in obj
-    assert "uptime_s" in obj
+    assert obj.get("agent_id") == "agent_1"
+    assert "version" in obj
+    # LWT is minimal (set once at connect); no connected_since_ts/uptime_s
 
     fake_paho_client.connect.assert_called_with("localhost", 1883, keepalive=60)
     fake_paho_client.loop_start.assert_called_once()
@@ -109,7 +110,7 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
 
     publish_calls = fake_paho_client.publish.call_args_list
     retained_publishes = [c for c in publish_calls if c[1].get("retain") is True]
-    assert len(retained_publishes) >= 4  # metadata, status, cfg, cfg/telemetry (state published after components load)
+    assert len(retained_publishes) >= 3  # metadata, status, cfg (state published after components load)
 
     status_calls = [c for c in publish_calls if c[0][0] == topics.status()]
     assert len(status_calls) > 0

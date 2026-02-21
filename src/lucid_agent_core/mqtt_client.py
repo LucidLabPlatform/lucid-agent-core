@@ -683,19 +683,12 @@ class AgentMQTTClient:
             client = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
             client.username_pw_set(self.username, self.password)
 
-            # LWT must match exact status schema with last known values
-            uptime_s = 0.0
-            if self._connected_ts is not None:
-                uptime_s = max(0.0, time.time() - self._connected_ts)
-            
-            payload = StatusPayload(
-                state="offline",
-                connected_since_ts=self._connected_since_ts,
-                uptime_s=uptime_s,
-            )
+            # LWT is minimal: set once at connect; broker publishes on disconnect/crash.
+            # Cannot contain live values (e.g. uptime at crash). Same topic as status.
+            lwt_payload = {"state": "offline", "agent_id": self.username, "version": self.version}
             client.will_set(
                 self.topics.status(),
-                payload=payload.to_json(),
+                payload=json.dumps(lwt_payload),
                 qos=1,
                 retain=True,
             )

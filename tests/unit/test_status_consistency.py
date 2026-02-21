@@ -44,11 +44,10 @@ def client(fake_paho_client, monkeypatch):
     )
 
 
-def test_lwt_matches_status_schema_exactly(client, fake_paho_client):
-    """LWT must have state, connected_since_ts, uptime_s (no missing fields)."""
+def test_lwt_uses_minimal_schema(client, fake_paho_client):
+    """LWT is minimal: state, agent_id, version (set once at connect; no live uptime)."""
     client.connect()
     
-    # Verify LWT was set with exact schema
     fake_paho_client.will_set.assert_called_once()
     args, kwargs = fake_paho_client.will_set.call_args
     
@@ -60,11 +59,10 @@ def test_lwt_matches_status_schema_exactly(client, fake_paho_client):
     assert kwargs["qos"] == 1
     
     payload = json.loads(payload_str)
-    assert "state" in payload
-    assert "connected_since_ts" in payload
-    assert "uptime_s" in payload
     assert payload["state"] == "offline"
-    assert len(payload) == 3  # No extra fields
+    assert payload.get("agent_id") == "test"
+    assert "version" in payload
+    assert set(payload.keys()) <= {"state", "agent_id", "version"}
 
 
 def test_status_connected_since_ts_stable_across_updates(client, fake_paho_client, tmp_path):

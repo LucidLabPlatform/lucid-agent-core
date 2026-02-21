@@ -57,7 +57,6 @@ def test_loads_and_autostarts_component(monkeypatch, loader_args):
         "cpu": {
             "entrypoint": "some.module:CPU",
             "enabled": True,
-            "auto_start": True,
         }
     }
 
@@ -68,15 +67,15 @@ def test_loads_and_autostarts_component(monkeypatch, loader_args):
     assert results[0].started is True
 
 
-def test_loads_but_does_not_start_when_auto_start_false(monkeypatch, loader_args):
+def test_loads_but_does_not_start_when_disabled(monkeypatch, loader_args):
+    """When enabled is False, component is loaded but not started."""
     mod = types.SimpleNamespace(CPU=GoodComponent)
     monkeypatch.setattr("importlib.import_module", lambda name: mod)
 
     registry = {
         "cpu": {
             "entrypoint": "some.module:CPU",
-            "enabled": True,
-            "auto_start": False,
+            "enabled": False,
         }
     }
 
@@ -87,22 +86,22 @@ def test_loads_but_does_not_start_when_auto_start_false(monkeypatch, loader_args
     assert results[0].started is False
 
 
-def test_skips_when_disabled(monkeypatch, loader_args):
+def test_skips_start_when_disabled(monkeypatch, loader_args):
+    """When enabled is False, component is loaded but not started (start skipped)."""
     monkeypatch.setattr("importlib.import_module", lambda name: types.SimpleNamespace(CPU=GoodComponent))
 
     registry = {
         "cpu": {
             "entrypoint": "some.module:CPU",
             "enabled": False,
-            "auto_start": True,
         }
     }
 
     components, results = load_components(registry=registry, **loader_args)
 
-    assert components == []
+    assert len(components) == 1
     assert len(results) == 1
-    assert results[0].ok is True  # "skipped but not error"
+    assert results[0].ok is True
     assert results[0].started is False
 
 
@@ -138,8 +137,8 @@ def test_failure_is_isolated(monkeypatch, loader_args):
     monkeypatch.setattr("importlib.import_module", lambda name: mod)
 
     registry = {
-        "cpu": {"entrypoint": "some.module:CPU", "auto_start": True},
-        "ok": {"entrypoint": "some.module:OK", "auto_start": True},
+        "cpu": {"entrypoint": "some.module:CPU", "enabled": True},
+        "ok": {"entrypoint": "some.module:OK", "enabled": True},
     }
 
     components, results = load_components(registry=registry, **loader_args)

@@ -338,6 +338,9 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
         apply_log_level_from_config(new_cfg)
         from lucid_agent_core.core.snapshots import build_cfg
         ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
+        # Apply heartbeat interval so runtime follows config immediately
+        if "heartbeat_s" in new_cfg:
+            ctx.mqtt.set_heartbeat_interval(int(new_cfg["heartbeat_s"]))
         # Telemetry thread will pick up config changes automatically
 
     topic = ctx.topics.evt_result("cfg/set")

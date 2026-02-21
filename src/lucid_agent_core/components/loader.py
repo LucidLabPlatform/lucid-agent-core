@@ -40,10 +40,8 @@ def load_components(
     """
     Load components from the registry.
 
-    Policy (v1.0.0):
-    - enabled: default True (skip if False)
-    - auto_start: default True (start immediately if True)
-
+    Policy (v1.0.0): enabled => start on boot. If enabled is True (default), the
+    component is started after load; if False, it is loaded but not started.
     This does not implement MQTT-driven start/stop yet; it is boot-time behavior only.
     """
     components: list[Component] = []
@@ -69,8 +67,6 @@ def load_components(
             continue
 
         enabled = meta.get("enabled", True)
-        # Always load components, but only start them if enabled
-        auto_start = meta.get("auto_start", True) and enabled
 
         try:
             module_path, class_name = _parse_entrypoint(entrypoint)
@@ -91,7 +87,7 @@ def load_components(
                 )
 
             started = False
-            if auto_start:
+            if enabled:
                 component.start()
                 started = True
 
@@ -104,10 +100,10 @@ def load_components(
                     started=started,
                 )
             )
-            if enabled is False:
+            if not enabled:
                 clog.info("loaded but disabled (not started)")
             else:
-                clog.info("loaded (auto_start=%s)", auto_start)
+                clog.info("loaded and started")
 
         except Exception as exc:
             clog.exception("failed to load (entrypoint=%s)", entrypoint)
