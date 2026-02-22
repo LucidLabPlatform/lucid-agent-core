@@ -157,7 +157,7 @@ def handle_install_component(raw_payload: str) -> InstallResult:
             wheel_path = Path(tmp) / req.source.asset
             _download_with_limits(wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES)
             _verify_sha256(wheel_path, expected=req.source.sha256)
-            pip_out, pip_err = _pip_install(wheel_path)
+            pip_out, pip_err = _pip_install(wheel_path, component_id=req.component_id)
         _verify_entrypoint(req.entrypoint)
 
         # Extract dist_name from wheel filename for uninstall
@@ -275,10 +275,10 @@ def _verify_sha256(path: Path, *, expected: str) -> None:
         raise RuntimeError(f"sha256 mismatch: got={got}")
 
 
-def _pip_install(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
+def _pip_install(wheel_path: Path, *, component_id: str) -> tuple[Optional[str], Optional[str]]:
     paths = get_paths()
     pip_path = paths.pip_path
-    
+
     if not pip_path.exists():
         raise FileNotFoundError(f"pip executable not found: {pip_path}")
 
@@ -296,7 +296,27 @@ def _pip_install(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
             f"stderr:\n{(completed.stderr or '').strip()}"
         )
 
-    return completed.stdout, completed.stderr
+    out_lines = [completed.stdout or ""]
+    err_lines = [completed.stderr or ""]
+
+    # Install [pi] extra for led_strip so the helper has rpi_ws281x in the same venv.
+    if component_id == "led_strip":
+        extra_completed = subprocess.run(
+            [str(pip_path), "install", "lucid-component-led-strip[pi]"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if extra_completed.returncode != 0:
+            logger.warning(
+                "pip install lucid-component-led-strip[pi] failed (helper may lack rpi_ws281x): %s",
+                (extra_completed.stderr or extra_completed.stdout or "").strip(),
+            )
+        else:
+            out_lines.append(extra_completed.stdout or "")
+            err_lines.append(extra_completed.stderr or "")
+
+    return "\n".join(out_lines).strip() or None, "\n".join(err_lines).strip() or None
 
 
 def _verify_entrypoint(entrypoint: str) -> None:

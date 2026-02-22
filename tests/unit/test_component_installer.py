@@ -108,7 +108,7 @@ def test_pip_failure_returns_error_and_no_registry_write(monkeypatch):
     monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
 
     # pip fails
-    def fake_pip_install(path: Path):
+    def fake_pip_install(path: Path, *, component_id: str = ""):
         raise RuntimeError("pip install failed rc=1\nstdout:\n...\nstderr:\nboom")
 
     monkeypatch.setattr(ci, "_pip_install", fake_pip_install)
