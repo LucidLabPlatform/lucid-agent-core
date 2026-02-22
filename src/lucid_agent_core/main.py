@@ -2,8 +2,9 @@
 LUCID Agent Core entrypoint.
 
 CLI:
-  lucid-agent-core run             -> run agent (runtime mode)
-  lucid-agent-core install-service -> install + enable systemd service (sudo; Linux systemd only)
+  lucid-agent-core run                      -> run agent (runtime mode)
+  lucid-agent-core install-service          -> install + enable systemd service (sudo; Linux systemd only)
+  lucid-agent-core install-led-strip-helper  -> install + start LED strip helper (sudo; run once on device after MQTT install)
 """
 
 from __future__ import annotations
@@ -210,6 +211,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to local wheel file (alternative to GitHub release download)",
     )
 
+    sub.add_parser(
+        "install-led-strip-helper",
+        help="Install and start the LED strip helper daemon (requires sudo; run once on the device after MQTT install)",
+    )
+
     return p
 
 
@@ -222,6 +228,12 @@ def main(argv: list[str] | None = None) -> None:
 
         wheel_path = Path(args.wheel) if args.wheel else None
         install_service(wheel_path)
+        return
+
+    if args.cmd == "install-led-strip-helper":
+        from lucid_agent_core.installer import install_led_strip_helper
+
+        install_led_strip_helper()
         return
 
     if args.cmd == "run":

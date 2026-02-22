@@ -288,3 +288,28 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     print(f"2. Start the service: sudo systemctl start {SERVICE_NAME}")
     print(f"3. Check status: sudo systemctl status {SERVICE_NAME}")
     print("="*60)
+
+
+def install_led_strip_helper() -> None:
+    """
+    Install and enable the LED strip helper daemon (run as root).
+
+    Uses the agent venv's lucid-led-strip-helper-installer. The agent does not
+    run sudo; run this once on the device after installing the led_strip
+    component via MQTT. Example:
+      sudo /home/lucid/lucid-agent-core/venv/bin/lucid-agent-core install-led-strip-helper
+    """
+    _ensure_root()
+
+    installer_exe = VENV_DIR / "bin" / "lucid-led-strip-helper-installer"
+    if not installer_exe.is_file():
+        print(
+            f"LED strip helper installer not found: {installer_exe}\n"
+            "Install the led_strip component in the agent venv first (e.g. via MQTT "
+            "cmd/components/install), then run this command again."
+        )
+        raise SystemExit(1)
+
+    print(f"Running {installer_exe} --install-once ...")
+    _run([str(installer_exe), "--install-once"])
+    print("LED strip helper installed and started.")
