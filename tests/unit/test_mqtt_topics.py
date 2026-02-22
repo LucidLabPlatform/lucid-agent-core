@@ -36,6 +36,8 @@ def test_component_topic_paths() -> None:
     assert t.component_cmd_reset("cpu") == "lucid/agents/agent_1/components/cpu/cmd/reset"
     assert t.component_cmd_ping("cpu") == "lucid/agents/agent_1/components/cpu/cmd/ping"
     assert t.component_cmd_cfg_set("cpu") == "lucid/agents/agent_1/components/cpu/cmd/cfg/set"
+    assert t.component_cmd("led_strip", "clear") == "lucid/agents/agent_1/components/led_strip/cmd/clear"
+    assert t.component_cmd("led_strip", "effect/glow") == "lucid/agents/agent_1/components/led_strip/cmd/effect/glow"
 
 
 @pytest.mark.parametrize("bad", ["", "a/b", "a b", "..", "agent-1"])

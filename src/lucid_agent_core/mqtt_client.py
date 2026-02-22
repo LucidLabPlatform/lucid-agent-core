@@ -92,6 +92,9 @@ class AgentMQTTClient:
         self._telemetry_stop_event = threading.Event()
         self._telemetry_last: dict[str, tuple[Any, float]] = {}  # metric -> (value, last_publish_ts)
 
+        # Per-component cmd topics (for unsubscribe on stop)
+        self._component_cmd_topics: dict[str, set[str]] = {}
+
     def set_context(self, ctx: Any) -> None:
         """Set command context and build agent command handlers. Call before connect()."""
         self._ctx = ctx
@@ -174,26 +177,33 @@ class AgentMQTTClient:
                 logger.info("Skipping cmd subscriptions for disabled component: %s", cid)
                 continue
             
-            cmd_actions = [
-                ("reset", "on_cmd_reset", self.topics.component_cmd_reset),
-                ("ping", "on_cmd_ping", self.topics.component_cmd_ping),
-            ]
-            for action, method_name, topic_fn in cmd_actions:
+            caps = getattr(comp, "capabilities", None)
+            cap_list = list(caps()) if callable(caps) else []
+            topics_for_cid = self._component_cmd_topics.setdefault(cid, set())
+            for action in cap_list:
+                method_name = "on_cmd_" + action.replace("/", "_")
                 method = getattr(comp, method_name, None)
                 if not callable(method):
                     continue
-                topic = topic_fn(cid)
+                try:
+                    topic = self.topics.component_cmd(cid, action)
+                except Exception:
+                    continue
+                if topic in self._handlers:
+                    continue
                 self._handlers[topic] = lambda p, m=method: m(p)
                 self._client.subscribe(topic, qos=1)
+                topics_for_cid.add(topic)
                 logger.info("Subscribed: %s", topic)
 
-            # cmd/cfg/set → Component.on_cmd_cfg_set(...)
             on_cfg_set = getattr(comp, "on_cmd_cfg_set", None)
             if callable(on_cfg_set):
                 cfg_set_topic = self.topics.component_cmd_cfg_set(cid)
-                self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
-                self._client.subscribe(cfg_set_topic, qos=1)
-                logger.info("Subscribed: %s", cfg_set_topic)
+                if cfg_set_topic not in self._handlers:
+                    self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
+                    self._client.subscribe(cfg_set_topic, qos=1)
+                    topics_for_cid.add(cfg_set_topic)
+                    logger.info("Subscribed: %s", cfg_set_topic)
 
     def get_component(self, component_id: str) -> Optional[Any]:
         """Get a component by ID. Returns None if not found."""
@@ -227,13 +237,8 @@ class AgentMQTTClient:
             logger.exception("Failed to stop component %s: %s", component_id, exc)
             return False
 
-        # Unsubscribe from component command topics
         if self._client and self._client.is_connected():
-            topics_to_unsub = [
-                self.topics.component_cmd_reset(component_id),
-                self.topics.component_cmd_ping(component_id),
-                self.topics.component_cmd_cfg_set(component_id),
-            ]
+            topics_to_unsub = self._component_cmd_topics.pop(component_id, set())
             for topic in topics_to_unsub:
                 if topic in self._handlers:
                     try:
@@ -320,31 +325,34 @@ class AgentMQTTClient:
         return False
 
     def _subscribe_component_topics(self, comp: Any, component_id: str) -> None:
-        """Subscribe to a single component's command topics. Internal helper."""
+        """Subscribe to a single component's command topics from its capabilities."""
         if not self._client or not self._client.is_connected():
             return
-        
-        cmd_actions = [
-            ("reset", "on_cmd_reset", self.topics.component_cmd_reset),
-            ("ping", "on_cmd_ping", self.topics.component_cmd_ping),
-        ]
-        for action, method_name, topic_fn in cmd_actions:
+        caps = getattr(comp, "capabilities", None)
+        cap_list = list(caps()) if callable(caps) else []
+        topics_for_cid = self._component_cmd_topics.setdefault(component_id, set())
+        for action in cap_list:
+            method_name = "on_cmd_" + action.replace("/", "_")
             method = getattr(comp, method_name, None)
             if not callable(method):
                 continue
-            topic = topic_fn(component_id)
-            if topic not in self._handlers:
-                self._handlers[topic] = lambda p, m=method: m(p)
-                self._client.subscribe(topic, qos=1)
-                logger.info("Subscribed: %s", topic)
-
-        # cmd/cfg/set → Component.on_cmd_cfg_set(...)
+            try:
+                topic = self.topics.component_cmd(component_id, action)
+            except Exception:
+                continue
+            if topic in self._handlers:
+                continue
+            self._handlers[topic] = lambda p, m=method: m(p)
+            self._client.subscribe(topic, qos=1)
+            topics_for_cid.add(topic)
+            logger.info("Subscribed: %s", topic)
         on_cfg_set = getattr(comp, "on_cmd_cfg_set", None)
         if callable(on_cfg_set):
             cfg_set_topic = self.topics.component_cmd_cfg_set(component_id)
             if cfg_set_topic not in self._handlers:
                 self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
                 self._client.subscribe(cfg_set_topic, qos=1)
+                topics_for_cid.add(cfg_set_topic)
                 logger.info("Subscribed: %s", cfg_set_topic)
 
     def publish_retained_state(self, components_list: list[dict[str, Any]]) -> None:

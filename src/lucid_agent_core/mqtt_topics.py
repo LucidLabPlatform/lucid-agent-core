@@ -143,3 +143,10 @@ class TopicSchema:
 
     def component_cmd_cfg_set(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/cmd/cfg/set"
+
+    def component_cmd(self, component_id: str, action: str) -> str:
+        """Component command topic for any action, e.g. 'reset', 'clear', 'effect/glow'."""
+        _validate_component_id(component_id)
+        if not action:
+            raise TopicSchemaError("action must be non-empty")
+        return f"{self.component_base(component_id)}/cmd/{action}"
