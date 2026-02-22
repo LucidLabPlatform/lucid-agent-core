@@ -77,6 +77,10 @@ sudo systemctl status lucid-agent-core
 
 Component registry: `/home/lucid/lucid-agent-core/data/components_registry.json`. Logs: `journalctl -u lucid-agent-core -f`.
 
+### Running with hardware (e.g. LED strip)
+
+Use the **LED strip helper daemon** so agent-core stays as user `lucid`: install lucid-component-led-strip with the `[pi]` extra, then install and start `lucid-led-strip-helper.service`. See the lucid-component-led-strip docs.
+
 ## Troubleshooting
 
 - **MQTT connection failed**: Check broker, credentials in env, network/firewall.

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from dataclasses import asdict
-
 from lucid_agent_core.components.registry import load_registry, write_registry
+from lucid_agent_core.paths import get_paths
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.core.component_installer import handle_install_component
 from lucid_agent_core.core.component_uninstaller import handle_uninstall_component
@@ -22,6 +23,31 @@ from lucid_agent_core.core.restart import request_systemd_restart
 from lucid_agent_core.core.snapshots import build_state
 
 logger = logging.getLogger(__name__)
+
+
+def _try_install_led_strip_helper() -> None:
+    """If lucid-led-strip-helper-installer is in the venv, run it via sudo to install and start the helper."""
+    try:
+        paths = get_paths()
+        installer = paths.venv_dir / "bin" / "lucid-led-strip-helper-installer"
+        if not installer.is_file():
+            logger.debug("led_strip helper installer not found at %s (install with [pi] extra?)", installer)
+            return
+        r = subprocess.run(
+            ["sudo", str(installer), "--install-once"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            logger.info("LED strip helper installed and started")
+        else:
+            logger.warning(
+                "LED strip helper install failed (sudo?): %s",
+                (r.stderr or r.stdout or "").strip() or r.returncode,
+            )
+    except Exception as exc:
+        logger.warning("LED strip helper install failed: %s", exc)
 
 
 def _request_id(payload_str: str) -> str:
@@ -128,7 +154,10 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
             result.component_id,
             result.restart_required,
         )
-        
+
+        if result.ok and result.component_id == "led_strip":
+            _try_install_led_strip_helper()
+
         if result.ok and result.restart_required:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
