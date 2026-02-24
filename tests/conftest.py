@@ -35,6 +35,6 @@ def mock_mqtt_client():
     """Create a mock MQTT client"""
     client = MagicMock()
     client.is_connected.return_value = True
-    client.publish.return_value = (0, 1)  # (rc, mid)
+    client.publish.return_value = (0, 1)  # (rc, mid) — MQTTMessageInfo; return value is never checked
     return client
 

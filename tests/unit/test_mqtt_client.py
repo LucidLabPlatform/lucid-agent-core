@@ -7,6 +7,19 @@ from lucid_agent_core.mqtt_client import AgentMQTTClient
 from lucid_agent_core.mqtt_topics import TopicSchema
 
 
+class _SuccessRC:
+    """Minimal ReasonCode stand-in for VERSION2 callback tests (value=0 = success)."""
+
+    def __eq__(self, other: object) -> bool:
+        return int(other) == 0 if isinstance(other, int) else NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        return int(other) != 0 if isinstance(other, int) else NotImplemented
+
+    def __str__(self) -> str:
+        return "Success"
+
+
 class FakeMQTTMessage:
     def __init__(self, topic: str, payload: bytes):
         self.topic = topic
@@ -92,7 +105,7 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
     client.set_context(ctx)
 
     client.connect()
-    client._on_connect(fake_paho_client, None, {}, 0)
+    client._on_connect(fake_paho_client, None, {}, _SuccessRC(), None)
 
     topics = TopicSchema("agent_1")
 
@@ -197,3 +210,64 @@ def test_disconnect_publishes_offline_and_stops_loop(client, fake_paho_client):
     )
     fake_paho_client.loop_stop.assert_called_once()
     fake_paho_client.disconnect.assert_called_once()
+
+
+def test_add_component_handlers_subscribes_hyphenated_actions(client, fake_paho_client):
+    class FakeComponent:
+        component_id = "led_strip"
+
+        def capabilities(self):
+            return ["set-color", "effect/color-wipe", "effect/glow"]
+
+        def on_cmd_set_color(self, payload: str) -> None:
+            pass
+
+        def on_cmd_effect_color_wipe(self, payload: str) -> None:
+            pass
+
+        def on_cmd_effect_glow(self, payload: str) -> None:
+            pass
+
+    comp = FakeComponent()
+    registry = {"led_strip": {"enabled": True}}
+    client._client = fake_paho_client
+    fake_paho_client.is_connected.return_value = True
+
+    client.add_component_handlers([comp], registry)
+
+    topics = TopicSchema("agent_1")
+    expected_topics = [
+        topics.component_cmd("led_strip", "set-color"),
+        topics.component_cmd("led_strip", "effect/color-wipe"),
+        topics.component_cmd("led_strip", "effect/glow"),
+    ]
+    for topic in expected_topics:
+        assert topic in client._handlers
+        fake_paho_client.subscribe.assert_any_call(topic, qos=1)
+
+
+def test_subscribe_component_topics_subscribes_hyphenated_actions(client, fake_paho_client):
+    class FakeComponent:
+        def capabilities(self):
+            return ["set-range-percent", "effect/rainbow-cycle"]
+
+        def on_cmd_set_range_percent(self, payload: str) -> None:
+            pass
+
+        def on_cmd_effect_rainbow_cycle(self, payload: str) -> None:
+            pass
+
+    comp = FakeComponent()
+    client._client = fake_paho_client
+    fake_paho_client.is_connected.return_value = True
+
+    client._subscribe_component_topics(comp, "led_strip")
+
+    topics = TopicSchema("agent_1")
+    expected_topics = [
+        topics.component_cmd("led_strip", "set-range-percent"),
+        topics.component_cmd("led_strip", "effect/rainbow-cycle"),
+    ]
+    for topic in expected_topics:
+        assert topic in client._handlers
+        fake_paho_client.subscribe.assert_any_call(topic, qos=1)
