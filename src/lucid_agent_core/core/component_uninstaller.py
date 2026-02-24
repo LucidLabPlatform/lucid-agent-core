@@ -53,7 +53,7 @@ def handle_uninstall_component(raw_payload: str) -> UninstallResult:
     Validate payload, uninstall component, update registry, return result.
 
     Args:
-        raw_payload: JSON string with {request_id, component_id, dist_name?}
+        raw_payload: JSON string with {request_id, component_id}
 
     Returns:
         UninstallResult with operation outcome
@@ -62,15 +62,10 @@ def handle_uninstall_component(raw_payload: str) -> UninstallResult:
         1. Parse and validate JSON
         2. Load registry
         3. If not found: return ok=True, noop=True (idempotent)
-        4. STRICT: Extract dist_name from registry OR payload (migration support)
+        4. Extract dist_name from registry
         5. Run pip uninstall
         6. Remove from registry atomically
         7. Return result with restart_required=True
-
-    Migration support:
-        For registries from pre-v1.0.0 without dist_name, caller can provide
-        dist_name explicitly in payload to enable uninstall. This maintains
-        strictness while allowing recovery.
     """
     ts = _utc_now()
 
@@ -89,7 +84,6 @@ def handle_uninstall_component(raw_payload: str) -> UninstallResult:
 
     request_id = req["request_id"]
     component_id = req["component_id"]
-    payload_dist_name = req.get("dist_name")  # Optional migration field
 
     try:
         # Load registry
@@ -108,26 +102,17 @@ def handle_uninstall_component(raw_payload: str) -> UninstallResult:
                 restart_required=False,
             )
 
-        # Extract dist_name: prefer registry, fallback to payload (migration)
+        # Extract dist_name from registry
         dist_name = existing.get("dist_name")
-        if not dist_name and payload_dist_name:
-            logger.warning(
-                "Component %s registry missing dist_name, using payload value (migration)",
-                component_id,
-            )
-            dist_name = payload_dist_name
 
         if not dist_name:
-            logger.error("Component %s registry missing dist_name and none provided", component_id)
+            logger.error("Component %s registry missing dist_name", component_id)
             return UninstallResult(
                 request_id=request_id,
                 component_id=component_id,
                 ok=False,
                 ts=ts,
-                error=(
-                    "registry missing dist_name for component; "
-                    "provide dist_name in uninstall payload for migration"
-                ),
+                error="registry missing dist_name; reinstall the component",
                 restart_required=False,
             )
 
@@ -171,7 +156,7 @@ def _parse_and_validate(raw_payload: str) -> dict[str, str]:
         raw_payload: JSON string
 
     Returns:
-        Dict with request_id, component_id, and optional dist_name
+        Dict with request_id, component_id
 
     Raises:
         ValidationError: If payload is invalid
@@ -184,7 +169,6 @@ def _parse_and_validate(raw_payload: str) -> dict[str, str]:
     if not isinstance(payload, dict):
         raise ValidationError("payload must be a JSON object")
 
-    # Required fields
     for key in ("request_id", "component_id"):
         if key not in payload:
             raise ValidationError(f"missing required key: {key}")
@@ -198,16 +182,7 @@ def _parse_and_validate(raw_payload: str) -> dict[str, str]:
     if not isinstance(component_id, str) or not _COMPONENT_ID_RE.fullmatch(component_id):
         raise ValidationError(f"component_id must match ^[a-z0-9_]+$: {component_id}")
 
-    result = {"request_id": request_id, "component_id": component_id}
-
-    # Optional dist_name for migration support
-    if "dist_name" in payload:
-        dist_name = payload["dist_name"]
-        if not isinstance(dist_name, str) or not dist_name:
-            raise ValidationError("dist_name must be a non-empty string if provided")
-        result["dist_name"] = dist_name
-
-    return result
+    return {"request_id": request_id, "component_id": component_id}
 
 
 def _pip_uninstall(dist_name: str) -> tuple[Optional[str], Optional[str]]:

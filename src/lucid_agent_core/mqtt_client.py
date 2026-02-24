@@ -377,7 +377,7 @@ class AgentMQTTClient:
     def publish_retained_refresh(self, components_list: list[dict[str, Any]]) -> None:
         """
         Republish all retained snapshots that are not always updated: metadata, status,
-        state, cfg. Use after cmd/refresh to refresh topics without restart.
+        state, cfg, cfg/logging, cfg/telemetry. Use after cmd/refresh to refresh topics without restart.
         """
         if not self._ctx or not self._client:
             return
@@ -386,6 +386,8 @@ class AgentMQTTClient:
             build_status,
             build_state,
             build_cfg,
+            build_cfg_logging,
+            build_cfg_telemetry,
         )
         ctx = self._ctx
         metadata = build_metadata(ctx.agent_id, self.version)
@@ -401,9 +403,11 @@ class AgentMQTTClient:
         ctx.publish(self.topics.status(), status, retain=True, qos=1)
         state = build_state(components_list)
         ctx.publish(self.topics.state(), state, retain=True, qos=1)
-        cfg = ctx.config_store.get_cached()
-        ctx.publish(self.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
-        logger.info("Published retained refresh (metadata, status, state, cfg)")
+        raw_cfg = ctx.config_store.get_cached()
+        ctx.publish(self.topics.cfg(), build_cfg(raw_cfg), retain=True, qos=1)
+        ctx.publish(self.topics.cfg_logging(), build_cfg_logging(raw_cfg), retain=True, qos=1)
+        ctx.publish(self.topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1)
+        logger.info("Published retained refresh (metadata, status, state, cfg, cfg/logging, cfg/telemetry)")
 
     def set_heartbeat_interval(self, interval_s: int) -> None:
         with self._hb_interval_lock:
@@ -495,14 +499,10 @@ class AgentMQTTClient:
                 continue
             
             try:
-                # Use build_cfg() to ensure defaults are applied
-                from lucid_agent_core.core.snapshots import build_cfg
+                from lucid_agent_core.core.snapshots import build_cfg_telemetry
                 raw_cfg = self._ctx.config_store.get_cached()
-                cfg = build_cfg(raw_cfg)
-                
-                telemetry_cfg = cfg.get("telemetry", {})
-                metrics_cfg = telemetry_cfg.get("metrics", {})
-                
+                metrics_cfg = build_cfg_telemetry(raw_cfg)
+
                 if not metrics_cfg:
                     logger.debug("Telemetry loop: no metrics config found, waiting...")
                     if self._telemetry_stop_event.wait(timeout=2.0):
@@ -567,14 +567,12 @@ class AgentMQTTClient:
         
         # Log current telemetry config state
         if self._ctx:
-            from lucid_agent_core.core.snapshots import build_cfg
+            from lucid_agent_core.core.snapshots import build_cfg_telemetry
             raw_cfg = self._ctx.config_store.get_cached()
-            cfg = build_cfg(raw_cfg)
-            telemetry_cfg = cfg.get("telemetry", {})
-            metrics_cfg = telemetry_cfg.get("metrics", {})
-            enabled_metrics = [name for name, mcfg in metrics_cfg.items() 
+            metrics_cfg = build_cfg_telemetry(raw_cfg)
+            enabled_metrics = [name for name, mcfg in metrics_cfg.items()
                              if isinstance(mcfg, dict) and mcfg.get("enabled", False)]
-            logger.info("Starting telemetry thread. Enabled metrics: %s (total metrics: %d)", 
+            logger.info("Starting telemetry thread. Enabled metrics: %s (total metrics: %d)",
                        enabled_metrics if enabled_metrics else "none", len(metrics_cfg))
         
         self._telemetry_stop_event.clear()

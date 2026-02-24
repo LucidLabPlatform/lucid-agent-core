@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict
 from lucid_agent_core.components.registry import load_registry, write_registry
 from lucid_agent_core.paths import get_paths
@@ -22,6 +23,27 @@ from lucid_agent_core.core.restart import request_systemd_restart
 from lucid_agent_core.core.snapshots import build_state
 
 logger = logging.getLogger(__name__)
+
+
+class _SeenRequestIds:
+    """Thread-safe set of all request_ids seen since agent start. Used to reject duplicates."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seen: set[str] = set()
+
+    def check_and_add(self, request_id: str) -> bool:
+        """Return True if request_id was already seen (duplicate). Adds to set if new."""
+        if not request_id:
+            return False
+        with self._lock:
+            if request_id in self._seen:
+                return True
+            self._seen.add(request_id)
+            return False
+
+
+_seen_request_ids = _SeenRequestIds()
 
 
 def _try_install_led_strip_helper() -> None:
@@ -56,9 +78,20 @@ def _parse_payload(payload_str: str) -> dict:
         return {}
 
 
+def _check_duplicate(ctx: CoreCommandContext, request_id: str, result_topic: str) -> bool:
+    """Return True and publish error if request_id was already seen. Caller should return early."""
+    if _seen_request_ids.check_and_add(request_id):
+        logger.warning("Duplicate request_id=%s rejected", request_id)
+        ctx.publish(result_topic, {"request_id": request_id, "ok": False, "error": "duplicate request_id"}, retain=False, qos=1)
+        return True
+    return False
+
+
 def on_ping(ctx: CoreCommandContext, payload_str: str) -> None:
     """Handle cmd/ping → evt/ping/result."""
     request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("ping")):
+        return
     ctx.publish_result("ping", request_id, ok=True, error=None)
     logger.debug("Ping result published for request_id=%s", request_id)
 
@@ -66,6 +99,8 @@ def on_ping(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_restart(ctx: CoreCommandContext, payload_str: str) -> None:
     """Handle cmd/restart → evt/restart/result; then request process restart."""
     request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("restart")):
+        return
     ok = request_systemd_restart(reason="cmd/restart")
     ctx.publish_result("restart", request_id, ok=ok, error=None if ok else "restart not available")
     if ok:
@@ -88,12 +123,14 @@ def _publish_component_metadata(ctx: CoreCommandContext, component_id: str, vers
 def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/refresh → evt/refresh/result.
-    Republish retained topics that are not always updated: metadata, status, state, cfg, and each component metadata.
+    Republish retained topics: metadata, status, state, cfg, cfg/logging, cfg/telemetry, and each component metadata.
     """
     request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("refresh")):
+        return
     try:
         registry = load_registry()
-        from lucid_agent_core.core.snapshots import build_components_list, build_metadata, build_state, build_cfg
+        from lucid_agent_core.core.snapshots import build_components_list, build_metadata, build_state, build_cfg, build_cfg_logging, build_cfg_telemetry
         components_list = build_components_list(registry, ctx.component_manager)
         if hasattr(ctx.mqtt, "publish_retained_refresh"):
             ctx.mqtt.publish_retained_refresh(components_list)
@@ -101,8 +138,10 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
             state = build_state(components_list)
             ctx.publish(ctx.topics.metadata(), build_metadata(ctx.agent_id, ctx.agent_version), retain=True, qos=1)
             ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
-            cfg = ctx.config_store.get_cached()
-            ctx.publish(ctx.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
+            raw_cfg = ctx.config_store.get_cached()
+            ctx.publish(ctx.topics.cfg(), build_cfg(raw_cfg), retain=True, qos=1)
+            ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(raw_cfg), retain=True, qos=1)
+            ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1)
         # Republish each component's metadata topic so version/capabilities stay in sync with registry
         for cid, meta in registry.items():
             _publish_component_metadata(ctx, cid, meta.get("version", "?"))
@@ -116,10 +155,13 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/install → evt/components/install/result.
-    
+
     After install: update state.components and republish retained state.
     If restart_required: flush publish, then restart.
     """
+    request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_components_result("install")):
+        return
     try:
         result = handle_install_component(payload_str)
         result_dict = asdict(result)
@@ -171,10 +213,13 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/uninstall → evt/components/uninstall/result.
-    
+
     After uninstall: update state.components and republish retained state.
     If restart_required: flush publish, then restart.
     """
+    request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_components_result("uninstall")):
+        return
     try:
         result = handle_uninstall_component(payload_str)
         result_dict = asdict(result)
@@ -223,13 +268,16 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/enable → evt/components/enable/result.
-    
+
     Set enabled=true in registry, start component if loaded, resubscribe to topics, republish state.
     """
     payload = _parse_payload(payload_str)
     request_id = payload.get("request_id", "")
     component_id = payload.get("component_id", "")
-    
+
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_components_result("enable")):
+        return
+
     if not component_id:
         ctx.publish_result_error(
             ctx.topics.evt_components_result("enable"),
@@ -284,13 +332,16 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
 def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
     """
     Handle cmd/components/disable → evt/components/disable/result.
-    
+
     Set enabled=false in registry, stop component, unsubscribe from topics, republish state.
     """
     payload = _parse_payload(payload_str)
     request_id = payload.get("request_id", "")
     component_id = payload.get("component_id", "")
-    
+
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_components_result("disable")):
+        return
+
     if not component_id:
         ctx.publish_result_error(
             ctx.topics.evt_components_result("disable"),
@@ -342,7 +393,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
 
 def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
     """
-    Handle cmd/cfg/set: merge payload["set"] into config, save, republish cfg, apply log_level.
+    Handle cmd/cfg/set: merge payload["set"] into config, save, republish cfg/cfg_logging/cfg_telemetry, apply log_level.
     Result on evt/cfg/set/result.
     """
     try:
@@ -351,13 +402,18 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
         payload = {}
     request_id = payload.get("request_id", "")
 
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("cfg/set")):
+        return
+
     new_cfg, result = ctx.config_store.apply_set(payload)
     result["request_id"] = request_id
 
     if result.get("ok"):
         apply_log_level_from_config(new_cfg)
-        from lucid_agent_core.core.snapshots import build_cfg
+        from lucid_agent_core.core.snapshots import build_cfg, build_cfg_logging, build_cfg_telemetry
         ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
+        ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(new_cfg), retain=True, qos=1)
+        ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(new_cfg), retain=True, qos=1)
         # Apply heartbeat interval so runtime follows config immediately
         if "heartbeat_s" in new_cfg:
             ctx.mqtt.set_heartbeat_interval(int(new_cfg["heartbeat_s"]))
@@ -378,6 +434,9 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
     Downloads wheel, verifies SHA256, upgrades venv, updates registry, then restarts.
     Same pattern as core upgrade.
     """
+    request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_components_result("upgrade")):
+        return
     try:
         result = handle_component_upgrade(payload_str)
         result_dict = asdict(result)
@@ -439,6 +498,9 @@ def on_core_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
 
     Downloads wheel, verifies SHA256, upgrades venv, then restarts.
     """
+    request_id = _request_id(payload_str)
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("core/upgrade")):
+        return
     try:
         result = handle_core_upgrade(payload_str)
         result_dict = asdict(result)

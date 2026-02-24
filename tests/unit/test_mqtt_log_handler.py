@@ -2,19 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-from types import SimpleNamespace
 
 from lucid_agent_core.core.log_config import level_from_cfg_or_env
 from lucid_agent_core.core.mqtt_log_handler import MQTTLogHandler
-from lucid_agent_core.core.snapshots import build_cfg
-
-
-class _FakeConfigStore:
-    def __init__(self, cfg: dict):
-        self._cfg = cfg
-
-    def get_cached(self) -> dict:
-        return dict(self._cfg)
+from lucid_agent_core.core.snapshots import build_cfg, build_cfg_logging
 
 
 class _FakeConnectedClient:
@@ -23,8 +14,7 @@ class _FakeConnectedClient:
 
 
 class _FakeMQTTClient:
-    def __init__(self, cfg: dict):
-        self._ctx = SimpleNamespace(config_store=_FakeConfigStore(cfg))
+    def __init__(self):
         self._client = _FakeConnectedClient()
         self.published: list[dict] = []
 
@@ -39,24 +29,39 @@ class _FakeMQTTClient:
         )
 
 
-def test_build_cfg_defaults_enable_logs_and_debug_level():
+def test_build_cfg_returns_only_heartbeat_s():
     cfg = build_cfg({})
-    assert cfg["logs_enabled"] is True
-    assert cfg["log_level"] == "DEBUG"
+    assert "heartbeat_s" in cfg
+    assert "logs_enabled" not in cfg
+    assert "log_level" not in cfg
+    assert "telemetry" not in cfg
 
 
-def test_level_from_cfg_or_env_defaults_debug(monkeypatch):
+def test_build_cfg_logging_returns_log_level_only():
+    cfg = build_cfg_logging({})
+    assert "log_level" in cfg
+    assert cfg["log_level"] == "ERROR"
+    assert "logs_enabled" not in cfg
+
+
+def test_build_cfg_logging_reflects_stored_log_level():
+    cfg = build_cfg_logging({"log_level": "INFO"})
+    assert cfg["log_level"] == "INFO"
+    assert "logs_enabled" not in cfg
+
+
+def test_level_from_cfg_or_env_defaults_error(monkeypatch):
     monkeypatch.delenv("LUCID_LOG_LEVEL", raising=False)
-    assert level_from_cfg_or_env(None) == logging.DEBUG
+    assert level_from_cfg_or_env(None) == logging.ERROR
 
 
-def test_mqtt_log_handler_publishes_structured_line_when_enabled_by_default():
-    fake_mqtt = _FakeMQTTClient(cfg={})  # Missing logs_enabled should default to enabled
+def test_mqtt_log_handler_publishes():
+    fake_mqtt = _FakeMQTTClient()
     handler = MQTTLogHandler(fake_mqtt, "lucid/agents/agent_1/logs")
 
     record = logging.LogRecord(
         name="lucid.test",
-        level=logging.INFO,
+        level=logging.ERROR,
         pathname=__file__,
         lineno=52,
         msg="hello %s",
@@ -73,41 +78,12 @@ def test_mqtt_log_handler_publishes_structured_line_when_enabled_by_default():
     assert payload["count"] == 1
 
     line = payload["lines"][0]
-    required_fields = [
-        "ts",
-        "level",
-        "logger",
-        "module",
-        "function",
-        "file",
-        "line",
-        "thread",
-        "process",
-        "message",
-    ]
-    for field in required_fields:
+    # Slim fields only
+    for field in ("ts", "level", "logger", "message"):
         assert field in line
-    assert line["level"] == "info"
+    # Dropped fields must be absent
+    for field in ("module", "function", "file", "line", "thread", "process", "stack", "formatted"):
+        assert field not in line
+    assert line["level"] == "error"
     assert line["message"] == "hello mqtt"
     assert line["logger"] == "lucid.test"
-
-
-def test_mqtt_log_handler_respects_logs_enabled_false():
-    fake_mqtt = _FakeMQTTClient(cfg={"logs_enabled": False})
-    handler = MQTTLogHandler(fake_mqtt, "lucid/agents/agent_1/logs")
-
-    record = logging.LogRecord(
-        name="lucid.test",
-        level=logging.WARNING,
-        pathname=__file__,
-        lineno=97,
-        msg="suppressed",
-        args=(),
-        exc_info=None,
-        func="test_fn",
-        sinfo=None,
-    )
-    handler.emit(record)
-    handler._publish_batch()
-
-    assert fake_mqtt.published == []
