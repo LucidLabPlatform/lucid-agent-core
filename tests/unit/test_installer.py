@@ -22,6 +22,7 @@ def sandbox_paths(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(inst, "ENV_PATH", base / "agent-core.env")
     monkeypatch.setattr(inst, "VENV_DIR", base / "venv")
     monkeypatch.setattr(inst, "UNIT_PATH", systemd / "lucid-agent-core.service")
+    monkeypatch.setattr(inst, "_ensure_pip_cache", lambda: None)
 
     return tmp_path
 
@@ -103,23 +104,23 @@ def test_install_cli_with_local_wheel(sandbox_paths, mock_run, monkeypatch, tmp_
     
     def fake_run_with_cli_creation(cmd, check=True):
         mock_run.append((tuple(cmd), check))
-        # Create CLI when pip install is called
-        if "pip" in cmd[0] and "install" in cmd:
+        # Create CLI when pip install is called (installer uses sudo -u lucid pip install ...)
+        if any("pip" in c for c in cmd) and "install" in cmd:
             cli_path.write_text("#!/bin/bash\necho lucid-agent-core")
         return MagicMock(returncode=0)
-    
+
     monkeypatch.setattr(inst, "_run", fake_run_with_cli_creation)
-    
+
     # Create local wheel
     wheel_path = tmp_path / "lucid_agent_core-1.0.0-py3-none-any.whl"
     wheel_path.write_text("fake wheel content")
-    
+
     # Run install
     inst._install_cli_into_venv(wheel_path)
-    
-    # Verify pip install was called with wheel path
+
+    # Verify pip install was called with wheel path (via sudo -u SYSTEM_USER)
     cmds = [c[0] for c in mock_run]
-    expected_cmd = (str(pip_path), "install", "--upgrade", str(wheel_path))
+    expected_cmd = ("sudo", "-u", inst.SYSTEM_USER, str(pip_path), "install", "--upgrade", str(wheel_path))
     assert expected_cmd in cmds
 
 
@@ -141,22 +142,23 @@ def test_install_cli_from_github_when_no_wheel(sandbox_paths, mock_run, monkeypa
     
     def fake_run_with_cli_creation(cmd, check=True):
         mock_run.append((tuple(cmd), check))
-        if "pip" in cmd[0] and "install" in cmd:
+        # Create CLI when pip install is called (installer uses sudo -u lucid pip install ...)
+        if any("pip" in c for c in cmd) and "install" in cmd:
             cli_path.write_text("#!/bin/bash\necho lucid-agent-core")
         return MagicMock(returncode=0)
-    
+
     monkeypatch.setattr(inst, "_run", fake_run_with_cli_creation)
-    
+
     # Run install without wheel
     inst._install_cli_into_venv(None)
-    
+
     # Verify pip install was called with GitHub URL
     cmds = [c[0] for c in mock_run]
-    
-    # Find the pip install command
+
+    # Find the pip install command (via sudo -u SYSTEM_USER pip install ...)
     pip_install_cmd = None
     for cmd in cmds:
-        if len(cmd) >= 4 and "pip" in cmd[0] and "install" in cmd:
+        if len(cmd) >= 4 and any("pip" in c for c in cmd) and "install" in cmd:
             pip_install_cmd = cmd
             break
     

@@ -170,10 +170,10 @@ def build_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     
     # Always include log_level with default if missing
     if "log_level" not in result:
-        result["log_level"] = "INFO"
+        result["log_level"] = "DEBUG"
     
     # Always include logs_enabled with default if missing
     if "logs_enabled" not in result:
-        result["logs_enabled"] = False
+        result["logs_enabled"] = True
     
     return result

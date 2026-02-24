@@ -25,7 +25,7 @@ from lucid_agent_core.components.loader import load_components
 def _configure_logging(cfg: dict | None = None) -> None:
     """
     Single log level for all scopes (core, base, components).
-    Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else INFO.
+    Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else DEBUG.
     """
     from lucid_agent_core.core.log_config import apply_log_level_from_config
 

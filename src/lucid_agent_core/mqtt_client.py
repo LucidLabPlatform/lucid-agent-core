@@ -101,6 +101,13 @@ class AgentMQTTClient:
         self._build_handlers()
         self._setup_mqtt_logging()
         logger.info("Context set, handlers built")
+
+    @staticmethod
+    def _action_to_method_name(action: str) -> str:
+        """
+        Convert command action path (e.g. "effect/color-wipe") to handler name.
+        """
+        return "on_cmd_" + action.replace("/", "_").replace("-", "_")
     
     def _setup_mqtt_logging(self) -> None:
         """Set up MQTT logging handler for core logs."""
@@ -181,7 +188,7 @@ class AgentMQTTClient:
             cap_list = list(caps()) if callable(caps) else []
             topics_for_cid = self._component_cmd_topics.setdefault(cid, set())
             for action in cap_list:
-                method_name = "on_cmd_" + action.replace("/", "_")
+                method_name = self._action_to_method_name(action)
                 method = getattr(comp, method_name, None)
                 if not callable(method):
                     continue
@@ -332,7 +339,7 @@ class AgentMQTTClient:
         cap_list = list(caps()) if callable(caps) else []
         topics_for_cid = self._component_cmd_topics.setdefault(component_id, set())
         for action in cap_list:
-            method_name = "on_cmd_" + action.replace("/", "_")
+            method_name = self._action_to_method_name(action)
             method = getattr(comp, method_name, None)
             if not callable(method):
                 continue
@@ -605,9 +612,9 @@ class AgentMQTTClient:
             retain=True,
         )
 
-    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: dict, rc: int) -> None:
-        if rc != 0:
-            logger.error("MQTT connect failed rc=%s", rc)
+    def _on_connect(self, client: mqtt.Client, userdata: Any, connect_flags: Any, reason_code: Any, properties: Any) -> None:
+        if reason_code != 0:
+            logger.error("MQTT connect failed: %s", reason_code)
             return
 
         logger.info("Connected to MQTT broker as %s", self.username)
@@ -663,9 +670,9 @@ class AgentMQTTClient:
         # Start telemetry thread
         self._start_telemetry()
 
-    def _on_disconnect(self, client: mqtt.Client, userdata: Any, rc: int) -> None:
-        if rc != 0:
-            logger.warning("Unexpected disconnect rc=%s", rc)
+    def _on_disconnect(self, client: mqtt.Client, userdata: Any, disconnect_flags: Any, reason_code: Any, properties: Any) -> None:
+        if reason_code != 0:
+            logger.warning("Unexpected disconnect: %s", reason_code)
         self._stop_heartbeat()
         self._stop_telemetry()
 
@@ -688,7 +695,7 @@ class AgentMQTTClient:
                 self._connected_since_ts = _utc_iso()
                 self._connected_ts = time.time()
             
-            client = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id, protocol=mqtt.MQTTv311)
             client.username_pw_set(self.username, self.password)
 
             # LWT is minimal: set once at connect; broker publishes on disconnect/crash.

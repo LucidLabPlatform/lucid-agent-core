@@ -8,6 +8,7 @@ import pytest
 
 from lucid_agent_core.mqtt_client import AgentMQTTClient
 from lucid_agent_core.mqtt_topics import TopicSchema
+from tests.unit.test_mqtt_client import _SuccessRC
 
 
 @pytest.fixture
@@ -84,7 +85,7 @@ def test_status_connected_since_ts_stable_across_updates(client, fake_paho_clien
     
     # First connect
     client.connect()
-    client._on_connect(fake_paho_client, None, {}, 0)
+    client._on_connect(fake_paho_client, None, {}, _SuccessRC(), None)
     
     # Get initial connected_since_ts
     initial_ts = client._connected_since_ts
@@ -123,7 +124,7 @@ def test_status_uptime_increases(client, fake_paho_client, tmp_path):
     client.set_context(ctx)
     
     client.connect()
-    client._on_connect(fake_paho_client, None, {}, 0)
+    client._on_connect(fake_paho_client, None, {}, _SuccessRC(), None)
     
     # Get initial status (payload is in kwargs)
     status_calls = [
