@@ -14,21 +14,21 @@ from typing import Any
 
 def _parse_level(raw: str) -> int:
     if not raw or not str(raw).strip():
-        return logging.DEBUG
+        return logging.ERROR
     raw = str(raw).strip().upper()
     if raw.isdigit():
         return int(raw)
-    return int(getattr(logging, raw, logging.DEBUG))
+    return int(getattr(logging, raw, logging.ERROR))
 
 
 def level_from_cfg_or_env(cfg: dict[str, Any] | None) -> int:
     """
-    Resolve log level: cfg["log_level"] if present and valid, else LUCID_LOG_LEVEL env, else DEBUG.
+    Resolve log level: cfg["log_level"] if present and valid, else LUCID_LOG_LEVEL env, else ERROR.
     """
     if cfg and isinstance(cfg.get("log_level"), str):
         return _parse_level(cfg["log_level"])
     raw = os.environ.get("LUCID_LOG_LEVEL", "").strip()
-    return _parse_level(raw) if raw else logging.DEBUG
+    return _parse_level(raw) if raw else logging.ERROR
 
 
 def apply_log_level(level: int) -> None:

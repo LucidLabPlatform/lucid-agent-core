@@ -76,6 +76,9 @@ class TopicSchema:
     def cfg_telemetry(self) -> str:
         return f"{self.base}/cfg/telemetry"
 
+    def cfg_logging(self) -> str:
+        return f"{self.base}/cfg/logging"
+
 
     # -------------------------
     # Agent stream

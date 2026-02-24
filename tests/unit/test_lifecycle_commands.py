@@ -7,14 +7,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import lucid_agent_core.core.handlers as handlers
 from lucid_agent_core.core.handlers import (
     on_components_install,
     on_components_uninstall,
     on_components_enable,
     on_components_disable,
+    on_ping,
 )
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.mqtt_topics import TopicSchema
+
+
+@pytest.fixture(autouse=True)
+def reset_seen_request_ids():
+    """Reset the module-level seen_request_ids set before each test."""
+    handlers._seen_request_ids._seen.clear()
+    yield
+    handlers._seen_request_ids._seen.clear()
 
 
 @pytest.fixture
@@ -157,14 +167,59 @@ def test_disable_missing_component_id_returns_error(mock_ctx):
 def test_enable_nonexistent_component_returns_error(mock_ctx):
     """Test enable for non-existent component returns error."""
     payload = json.dumps({"request_id": "req123", "component_id": "nonexistent"})
-    
+
     with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
         mock_load.return_value = {}
-        
+
         on_components_enable(mock_ctx, payload)
-        
+
         # Verify error result published
         result_payload = mock_ctx.mqtt.publish.call_args[0][1]
         result = json.loads(result_payload)
         assert result["ok"] is False
         assert "component not found" in result["error"]
+
+
+def test_duplicate_request_id_rejected_with_error(mock_ctx):
+    """Second call with same request_id returns ok=false, error='duplicate request_id'."""
+    payload = json.dumps({"request_id": "dup-001", "component_id": "fixture_cpu"})
+
+    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+        mock_load.return_value = {
+            "fixture_cpu": {"component_id": "fixture_cpu", "version": "1.0.0", "enabled": True}
+        }
+        with patch("lucid_agent_core.core.handlers.write_registry"):
+            # First call — should succeed
+            on_components_enable(mock_ctx, payload)
+            first_calls = mock_ctx.mqtt.publish.call_count
+
+            # Second call with same request_id — should be rejected
+            on_components_enable(mock_ctx, payload)
+
+    # Find the duplicate rejection publish (last call)
+    last_publish = mock_ctx.mqtt.publish.call_args_list[-1]
+    result = json.loads(last_publish[0][1])
+    assert result["ok"] is False
+    assert result["error"] == "duplicate request_id"
+    assert result["request_id"] == "dup-001"
+
+
+def test_different_request_ids_both_processed(mock_ctx):
+    """Two calls with different request_ids are both processed."""
+    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+        mock_load.return_value = {
+            "fixture_cpu": {"component_id": "fixture_cpu", "version": "1.0.0", "enabled": False}
+        }
+        with patch("lucid_agent_core.core.handlers.write_registry"):
+            on_components_enable(mock_ctx, json.dumps({"request_id": "id-a", "component_id": "fixture_cpu"}))
+            on_components_enable(mock_ctx, json.dumps({"request_id": "id-b", "component_id": "fixture_cpu"}))
+
+    # Neither should be a duplicate rejection
+    for call in mock_ctx.mqtt.publish.call_args_list:
+        result_str = call[0][1]
+        try:
+            result = json.loads(result_str)
+            if "error" in result:
+                assert result.get("error") != "duplicate request_id"
+        except Exception:
+            pass

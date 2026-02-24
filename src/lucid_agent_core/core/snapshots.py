@@ -122,58 +122,42 @@ def build_state(
 
 def build_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     """
-    Build retained cfg. Always includes ALL configurable keys with current values or defaults.
-    Contract: telemetry (nested with per-metric configs), heartbeat_s, log_level.
+    Build retained cfg topic payload.
+    Contract: general operational settings only — {heartbeat_s}.
+    Logging settings → build_cfg_logging(). Telemetry settings → build_cfg_telemetry().
     """
-    result = cfg.copy()
-    
-    # Ensure telemetry structure exists
-    if "telemetry" not in result:
-        result["telemetry"] = {}
-    
-    telemetry = result["telemetry"]
-    if not isinstance(telemetry, dict):
-        telemetry = {}
-        result["telemetry"] = telemetry
-    
-    # Ensure metrics dict exists
-    if "metrics" not in telemetry:
-        telemetry["metrics"] = {}
-    
-    # Get available metrics from core state (cpu_percent, memory_percent, disk_percent)
+    return {
+        "heartbeat_s": int(cfg.get("heartbeat_s", 30)),
+    }
+
+
+def build_cfg_logging(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build retained cfg/logging topic payload.
+    Contract: {log_level}.
+    """
+    return {
+        "log_level": str(cfg.get("log_level", "ERROR")),
+    }
+
+
+def build_cfg_telemetry(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build retained cfg/telemetry topic payload.
+    Contract: flat metric dict — {metric_name: {enabled, interval_s, change_threshold_percent}}.
+    No nested "metrics" wrapper. Always includes all 3 system metrics with defaults.
+    """
     available_metrics = {"cpu_percent", "memory_percent", "disk_percent"}
-    
-    # Ensure all available metrics are in config with defaults
+    stored_metrics = cfg.get("telemetry", {}).get("metrics", {})
+
+    result: dict[str, Any] = {}
     for metric_name in available_metrics:
-        if metric_name not in telemetry["metrics"]:
-            telemetry["metrics"][metric_name] = {
-                "enabled": False,
-                "interval_s": 2,
-                "change_threshold_percent": 2.0,
-            }
-        else:
-            # Ensure metric config has all required fields
-            metric_cfg = telemetry["metrics"][metric_name]
-            if not isinstance(metric_cfg, dict):
-                metric_cfg = {}
-                telemetry["metrics"][metric_name] = metric_cfg
-            if "enabled" not in metric_cfg:
-                metric_cfg["enabled"] = False
-            if "interval_s" not in metric_cfg:
-                metric_cfg["interval_s"] = 2
-            if "change_threshold_percent" not in metric_cfg:
-                metric_cfg["change_threshold_percent"] = 2.0
-    
-    # Always include heartbeat_s with default if missing
-    if "heartbeat_s" not in result:
-        result["heartbeat_s"] = 30
-    
-    # Always include log_level with default if missing
-    if "log_level" not in result:
-        result["log_level"] = "DEBUG"
-    
-    # Always include logs_enabled with default if missing
-    if "logs_enabled" not in result:
-        result["logs_enabled"] = True
-    
+        metric_cfg = stored_metrics.get(metric_name, {})
+        if not isinstance(metric_cfg, dict):
+            metric_cfg = {}
+        result[metric_name] = {
+            "enabled": bool(metric_cfg.get("enabled", False)),
+            "interval_s": int(metric_cfg.get("interval_s", 2)),
+            "change_threshold_percent": float(metric_cfg.get("change_threshold_percent", 2.0)),
+        }
     return result
