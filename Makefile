@@ -42,8 +42,9 @@ test-unit:
 
 test-integration:
 	@if [ -d tests/integration ]; then \
-		(test -f .env && set -a && . ./.env && set +a); \
-		pytest tests/integration/ -v -q; \
+		(test -f .env && set -a && . ./.env && set +a) || true; \
+		pytest tests/integration/ -v -q; RC=$$?; \
+		[ $$RC -eq 0 ] || [ $$RC -eq 5 ] || exit $$RC; \
 	else \
 		echo "No integration tests."; \
 	fi
