@@ -33,7 +33,6 @@ def load_components(
     agent_id: str,
     base_topic: str,
     mqtt: Any,
-    config: object,
     *,
     registry: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[Component], list[ComponentLoadResult]]:
@@ -55,7 +54,7 @@ def load_components(
             base_topic=base_topic,
             component_id=component_id,
             mqtt=mqtt,
-            config=config,
+            config=meta.get("config") or {},
         )
         clog = context.logger()
 

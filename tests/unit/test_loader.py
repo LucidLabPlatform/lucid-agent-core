@@ -32,14 +32,12 @@ class NotAComponent:
 
 @pytest.fixture
 def loader_args():
-    """Agent id, base_topic, mqtt, config for load_components."""
+    """Agent id, base_topic, mqtt for load_components."""
     fake_mqtt = MagicMock()
-    fake_cfg = object()
     return {
         "agent_id": "agent_1",
         "base_topic": "lucid/agents/agent_1",
         "mqtt": fake_mqtt,
-        "config": fake_cfg,
     }
 
 
