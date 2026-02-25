@@ -38,19 +38,19 @@ test: test-unit test-integration
 	@echo "All tests passed."
 
 test-unit:
-	@pytest tests/unit/ -v -q
+	@$(VENV)/bin/python -m pytest tests/unit/ -v -q
 
 test-integration:
 	@if [ -d tests/integration ]; then \
 		(test -f .env && set -a && . ./.env && set +a) || true; \
-		pytest tests/integration/ -v -q; RC=$$?; \
+		$(VENV)/bin/python -m pytest tests/integration/ -v -q; RC=$$?; \
 		[ $$RC -eq 0 ] || [ $$RC -eq 5 ] || exit $$RC; \
 	else \
 		echo "No integration tests."; \
 	fi
 
 test-coverage:
-	@pytest tests/unit/ --cov=src/lucid_agent_core --cov-report=html --cov-report=term-missing -q
+	@$(VENV)/bin/python -m pytest tests/unit/ --cov=src/lucid_agent_core --cov-report=html --cov-report=term-missing -q
 
 test-deps:
 	@pip install -r requirements.txt
