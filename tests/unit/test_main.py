@@ -115,7 +115,7 @@ def test_run_agent_shutdown_stops_components_before_mqtt_disconnect(monkeypatch,
         def stop(self):
             stop_calls.append("stop")
 
-    def fake_load_components(agent_id, base_topic, mqtt, config, *, registry=None):
+    def fake_load_components(agent_id, base_topic, mqtt, *, registry=None):
         return ([C()], [SimpleNamespace(__dict__={})])
 
     monkeypatch.setattr(

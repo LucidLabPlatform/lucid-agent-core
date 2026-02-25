@@ -143,7 +143,6 @@ def run_agent() -> int:
         agent_id=cfg.agent_username,
         base_topic=agent.topics.base,
         mqtt=agent,
-        config=cfg,
     )
     logger.info(
         "Component load results: %s",
