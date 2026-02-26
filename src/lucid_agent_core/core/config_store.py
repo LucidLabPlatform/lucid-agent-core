@@ -48,6 +48,7 @@ def _fsync_dir(path: Path) -> None:
 def _utc_iso() -> str:
     """Return current UTC timestamp as ISO8601 string."""
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -212,16 +213,28 @@ class ConfigStore:
                         if "enabled" in metric_cfg and not isinstance(metric_cfg["enabled"], bool):
                             return False, f"telemetry.metrics.{metric_name}.enabled must be boolean"
                         if "interval_s" in metric_cfg:
-                            if not isinstance(metric_cfg["interval_s"], int) or metric_cfg["interval_s"] < 1:
-                                return False, f"telemetry.metrics.{metric_name}.interval_s must be integer >= 1"
+                            if (
+                                not isinstance(metric_cfg["interval_s"], int)
+                                or metric_cfg["interval_s"] < 1
+                            ):
+                                return (
+                                    False,
+                                    f"telemetry.metrics.{metric_name}.interval_s must be integer >= 1",
+                                )
                         if "change_threshold_percent" in metric_cfg:
-                            if not isinstance(metric_cfg["change_threshold_percent"], (int, float)) or metric_cfg["change_threshold_percent"] < 0:
-                                return False, f"telemetry.metrics.{metric_name}.change_threshold_percent must be number >= 0"
+                            if (
+                                not isinstance(metric_cfg["change_threshold_percent"], (int, float))
+                                or metric_cfg["change_threshold_percent"] < 0
+                            ):
+                                return (
+                                    False,
+                                    f"telemetry.metrics.{metric_name}.change_threshold_percent must be number >= 0",
+                                )
 
             if key == "heartbeat_s":
                 if not (MIN_HEARTBEAT <= value <= MAX_HEARTBEAT):
                     return False, f"heartbeat_s must be between {MIN_HEARTBEAT} and {MAX_HEARTBEAT}"
-            
+
             if key == "log_level":
                 if value not in VALID_LOG_LEVELS:
                     return False, f"log_level must be one of {VALID_LOG_LEVELS}"
@@ -266,7 +279,7 @@ class ConfigStore:
         # Merge with current config
         current = self.get_cached().copy()
         new_cfg = {**current, **set_dict}
-        
+
         # Deep merge for nested telemetry config (per-metric structure)
         if "telemetry" in set_dict and "telemetry" in current:
             current_telemetry = current["telemetry"].copy()

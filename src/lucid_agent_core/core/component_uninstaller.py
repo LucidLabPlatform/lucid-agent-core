@@ -200,7 +200,7 @@ def _pip_uninstall(dist_name: str) -> tuple[Optional[str], Optional[str]]:
     """
     paths = get_paths()
     pip_path = paths.pip_path
-    
+
     if not pip_path.exists():
         raise FileNotFoundError(f"pip executable not found: {pip_path}")
 

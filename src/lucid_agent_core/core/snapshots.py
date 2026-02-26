@@ -84,12 +84,12 @@ def build_components_list(
 ) -> list[dict[str, Any]]:
     """
     Build components list for state topic.
-    
+
     Args:
         registry: Component registry dict {component_id: {enabled, version, ...}}
         component_manager: Optional (unused, kept for compatibility)
         components: Optional (unused, kept for compatibility)
-        
+
     Returns:
         List of component dicts: [{component_id, version, enabled}]
     """
@@ -101,7 +101,7 @@ def build_components_list(
             "enabled": meta.get("enabled", True),
         }
         components_list.append(comp_dict)
-    
+
     return components_list
 
 

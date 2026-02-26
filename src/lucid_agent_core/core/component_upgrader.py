@@ -4,6 +4,7 @@ Component upgrade handler.
 Downloads wheel from GitHub release, verifies SHA256, upgrades venv, updates registry, restarts service.
 Same pattern as core upgrade but for components.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,7 +50,9 @@ class ComponentUpgradeRequest:
     def validate(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id:
             raise ValidationError("request_id must be a non-empty string")
-        if not isinstance(self.component_id, str) or not _COMPONENT_ID_RE.fullmatch(self.component_id):
+        if not isinstance(self.component_id, str) or not _COMPONENT_ID_RE.fullmatch(
+            self.component_id
+        ):
             raise ValidationError(f"component_id must match ^[a-z0-9_]+$: {self.component_id}")
         if self.release_type != "github_release":
             raise ValidationError('release_type must be "github_release"')
@@ -125,7 +128,7 @@ def _parse_and_validate(raw_payload: str) -> ComponentUpgradeRequest:
     repo_str = component_info.get("repo", "")
     if not repo_str or "/" not in repo_str:
         raise ValidationError(f"invalid repo format in registry for {component_id}: {repo_str}")
-    
+
     owner, repo = repo_str.split("/", 1)
     dist_name = component_info.get("dist_name", "")
     if not dist_name:
@@ -173,7 +176,7 @@ def _verify_sha256(path: Path, *, expected: str) -> None:
 def _pip_upgrade(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
     paths = get_paths()
     pip_path = paths.pip_path
-    
+
     if not pip_path.exists():
         raise FileNotFoundError(f"pip executable not found: {pip_path}")
 
@@ -248,7 +251,9 @@ def handle_component_upgrade(raw_payload: str) -> ComponentUpgradeResult:
         with tempfile.TemporaryDirectory() as tmp:
             wheel_filename = req.wheel_filename
             wheel_path = Path(tmp) / wheel_filename
-            _download_with_limits(req.wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES)
+            _download_with_limits(
+                req.wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES
+            )
             _verify_sha256(wheel_path, expected=req.sha256)
             pip_out, pip_err = _pip_upgrade(wheel_path)
 

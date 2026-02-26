@@ -26,9 +26,7 @@ def _validate_agent_id(agent_id: str) -> str:
     if not isinstance(agent_id, str) or not agent_id:
         raise TopicSchemaError("agent_id must be a non-empty string")
     if not _AGENT_ID_RE.fullmatch(agent_id):
-        raise TopicSchemaError(
-            f"agent_id '{agent_id}' is invalid; allowed: [a-z0-9_]+"
-        )
+        raise TopicSchemaError(f"agent_id '{agent_id}' is invalid; allowed: [a-z0-9_]+")
     return agent_id
 
 
@@ -36,9 +34,7 @@ def _validate_component_id(component_id: str) -> str:
     if not isinstance(component_id, str) or not component_id:
         raise TopicSchemaError("component_id must be a non-empty string")
     if not _COMPONENT_ID_RE.fullmatch(component_id):
-        raise TopicSchemaError(
-            f"component_id '{component_id}' is invalid; allowed: [a-z0-9_]+"
-        )
+        raise TopicSchemaError(f"component_id '{component_id}' is invalid; allowed: [a-z0-9_]+")
     return component_id
 
 
@@ -78,7 +74,6 @@ class TopicSchema:
 
     def cfg_logging(self) -> str:
         return f"{self.base}/cfg/logging"
-
 
     # -------------------------
     # Agent stream

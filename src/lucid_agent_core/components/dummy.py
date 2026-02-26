@@ -3,6 +3,7 @@ Minimal dummy component for testing load/start/stop.
 
 Entrypoint: lucid_agent_core.components.dummy:DummyComponent
 """
+
 from __future__ import annotations
 
 from lucid_component_base import Component

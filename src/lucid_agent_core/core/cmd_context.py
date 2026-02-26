@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 class MqttPublisher(Protocol):
     """Minimal MQTT publisher interface for command context."""
 
-    def publish(
-        self, topic: str, payload: Any, *, qos: int = 0, retain: bool = False
-    ) -> Any: ...
+    def publish(self, topic: str, payload: Any, *, qos: int = 0, retain: bool = False) -> Any: ...
 
 
 class ConfigStore(Protocol):

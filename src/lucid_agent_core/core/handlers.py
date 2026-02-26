@@ -52,7 +52,9 @@ def _try_install_led_strip_helper() -> None:
         paths = get_paths()
         installer = paths.venv_dir / "bin" / "lucid-led-strip-helper-installer"
         if not installer.is_file():
-            logger.debug("led_strip helper installer not found at %s (install with [pi] extra?)", installer)
+            logger.debug(
+                "led_strip helper installer not found at %s (install with [pi] extra?)", installer
+            )
             return
         logger.info(
             "LED strip component installed. To start the helper daemon, run on the device: "
@@ -82,7 +84,12 @@ def _check_duplicate(ctx: CoreCommandContext, request_id: str, result_topic: str
     """Return True and publish error if request_id was already seen. Caller should return early."""
     if _seen_request_ids.check_and_add(request_id):
         logger.warning("Duplicate request_id=%s rejected", request_id)
-        ctx.publish(result_topic, {"request_id": request_id, "ok": False, "error": "duplicate request_id"}, retain=False, qos=1)
+        ctx.publish(
+            result_topic,
+            {"request_id": request_id, "ok": False, "error": "duplicate request_id"},
+            retain=False,
+            qos=1,
+        )
         return True
     return False
 
@@ -130,18 +137,33 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
         return
     try:
         registry = load_registry()
-        from lucid_agent_core.core.snapshots import build_components_list, build_metadata, build_state, build_cfg, build_cfg_logging, build_cfg_telemetry
+        from lucid_agent_core.core.snapshots import (
+            build_components_list,
+            build_metadata,
+            build_state,
+            build_cfg,
+            build_cfg_logging,
+            build_cfg_telemetry,
+        )
+
         components_list = build_components_list(registry, ctx.component_manager)
         if hasattr(ctx.mqtt, "publish_retained_refresh"):
             ctx.mqtt.publish_retained_refresh(components_list)
         else:
             state = build_state(components_list)
-            ctx.publish(ctx.topics.metadata(), build_metadata(ctx.agent_id, ctx.agent_version), retain=True, qos=1)
+            ctx.publish(
+                ctx.topics.metadata(),
+                build_metadata(ctx.agent_id, ctx.agent_version),
+                retain=True,
+                qos=1,
+            )
             ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
             raw_cfg = ctx.config_store.get_cached()
             ctx.publish(ctx.topics.cfg(), build_cfg(raw_cfg), retain=True, qos=1)
             ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(raw_cfg), retain=True, qos=1)
-            ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1)
+            ctx.publish(
+                ctx.topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1
+            )
         # Republish each component's metadata topic so version/capabilities stay in sync with registry
         for cid, meta in registry.items():
             _publish_component_metadata(ctx, cid, meta.get("version", "?"))
@@ -165,7 +187,7 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
     try:
         result = handle_install_component(payload_str)
         result_dict = asdict(result)
-        
+
         # Publish result
         msg_info = ctx.publish(
             ctx.topics.evt_components_result("install"),
@@ -173,14 +195,15 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
             retain=False,
             qos=1,
         )
-        
+
         # Update retained state
         registry = load_registry()
         from lucid_agent_core.core.snapshots import build_components_list
+
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
-        
+
         logger.info(
             "Install result: ok=%s component=%s restart=%s",
             result.ok,
@@ -198,7 +221,7 @@ def on_components_install(ctx: CoreCommandContext, payload_str: str) -> None:
                 request_systemd_restart(reason=f"component install: {result.component_id}")
             except Exception as exc:
                 logger.error("Failed to wait for publish or restart: %s", exc)
-    
+
     except Exception as exc:
         logger.exception("Unhandled error in on_components_install")
         payload = _parse_payload(payload_str)
@@ -223,7 +246,7 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
     try:
         result = handle_uninstall_component(payload_str)
         result_dict = asdict(result)
-        
+
         # Publish result
         msg_info = ctx.publish(
             ctx.topics.evt_components_result("uninstall"),
@@ -231,21 +254,22 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
             retain=False,
             qos=1,
         )
-        
+
         # Update retained state
         registry = load_registry()
         from lucid_agent_core.core.snapshots import build_components_list
+
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
-        
+
         logger.info(
             "Uninstall result: ok=%s component=%s restart=%s",
             result.ok,
             result.component_id,
             result.restart_required,
         )
-        
+
         if result.ok and result.restart_required:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
@@ -253,7 +277,7 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
                 request_systemd_restart(reason=f"component uninstall: {result.component_id}")
             except Exception as exc:
                 logger.error("Failed to wait for publish or restart: %s", exc)
-    
+
     except Exception as exc:
         logger.exception("Unhandled error in on_components_uninstall")
         payload = _parse_payload(payload_str)
@@ -285,7 +309,7 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
             "component_id is required",
         )
         return
-    
+
     try:
         registry = load_registry()
         if component_id not in registry:
@@ -295,31 +319,35 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
                 f"component not found: {component_id}",
             )
             return
-        
+
         registry[component_id]["enabled"] = True
         write_registry(registry)
-        
+
         # Try to start component if loaded (will resubscribe automatically)
         started = False
         if ctx.component_manager:
             started = ctx.component_manager.start_component(component_id, registry)
             if not started:
-                logger.warning("Component %s enable: start_component returned False (component may not be loaded)", component_id)
+                logger.warning(
+                    "Component %s enable: start_component returned False (component may not be loaded)",
+                    component_id,
+                )
         else:
             logger.warning("Component %s enable: component_manager not available", component_id)
-        
+
         # Republish state
         from lucid_agent_core.core.snapshots import build_components_list
+
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
-        
+
         # Publish result
         result = {"request_id": request_id, "ok": True, "error": None}
         ctx.publish(ctx.topics.evt_components_result("enable"), result, retain=False, qos=1)
-        
+
         logger.info("Component enabled: %s (started=%s)", component_id, started)
-    
+
     except Exception as exc:
         logger.exception("Error enabling component")
         ctx.publish_result_error(
@@ -349,7 +377,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
             "component_id is required",
         )
         return
-    
+
     try:
         registry = load_registry()
         if component_id not in registry:
@@ -359,29 +387,30 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
                 f"component not found: {component_id}",
             )
             return
-        
+
         # Stop component if running
         stopped = False
         if ctx.component_manager:
             stopped = ctx.component_manager.stop_component(component_id)
             if stopped:
                 logger.info("Stopped component: %s", component_id)
-        
+
         registry[component_id]["enabled"] = False
         write_registry(registry)
-        
+
         # Republish state
         from lucid_agent_core.core.snapshots import build_components_list
+
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
-        
+
         # Publish result
         result = {"request_id": request_id, "ok": True, "error": None}
         ctx.publish(ctx.topics.evt_components_result("disable"), result, retain=False, qos=1)
-        
+
         logger.info("Component disabled: %s (stopped=%s)", component_id, stopped)
-    
+
     except Exception as exc:
         logger.exception("Error disabling component")
         ctx.publish_result_error(
@@ -410,7 +439,12 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
 
     if result.get("ok"):
         apply_log_level_from_config(new_cfg)
-        from lucid_agent_core.core.snapshots import build_cfg, build_cfg_logging, build_cfg_telemetry
+        from lucid_agent_core.core.snapshots import (
+            build_cfg,
+            build_cfg_logging,
+            build_cfg_telemetry,
+        )
+
         ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
         ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(new_cfg), retain=True, qos=1)
         ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(new_cfg), retain=True, qos=1)
@@ -456,6 +490,7 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
             registry[result.component_id] = registry.get(result.component_id, {})
             registry[result.component_id]["version"] = result.version
         from lucid_agent_core.core.snapshots import build_components_list
+
         components_list = build_components_list(registry, ctx.component_manager)
         state = build_state(components_list)
         ctx.publish(ctx.topics.state(), state, retain=True, qos=1)
@@ -477,7 +512,9 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
                 logger.info("Component upgrade result published, requesting restart")
-                request_systemd_restart(reason=f"component upgrade: {result.component_id} to {result.version}")
+                request_systemd_restart(
+                    reason=f"component upgrade: {result.component_id} to {result.version}"
+                )
             except Exception as exc:
                 logger.error("Failed to wait for publish or restart: %s", exc)
 

@@ -3,6 +3,7 @@ Component registry — persistent JSON store of installed components.
 
 Path: {base_dir}/data/components_registry.json. Atomic writes with fsync.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,7 +51,7 @@ def _validate_registry_shape(data: Any) -> dict[str, dict[str, Any]]:
 def load_registry() -> dict[str, dict[str, Any]]:
     paths = get_paths()
     registry_path = paths.registry_path
-    
+
     if not registry_path.exists():
         return {}
 
@@ -82,7 +83,7 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
     paths = get_paths()
     registry_path = paths.registry_path
     lock_path = paths.registry_lock_path
-    
+
     registry_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Lazy import: only Linux has fcntl. Agent targets Linux primarily.
@@ -110,7 +111,9 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
         fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
 
-def is_same_install(existing: dict[str, Any] | None, repo: str, version: str, entrypoint: str) -> bool:
+def is_same_install(
+    existing: dict[str, Any] | None, repo: str, version: str, entrypoint: str
+) -> bool:
     if not isinstance(existing, dict):
         return False
     return (

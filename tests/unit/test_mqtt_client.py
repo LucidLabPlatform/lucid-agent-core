@@ -219,6 +219,9 @@ def test_add_component_handlers_subscribes_hyphenated_actions(client, fake_paho_
         def capabilities(self):
             return ["set-color", "effect/color-wipe", "effect/glow"]
 
+        def _make_cmd_handler(self, action, method):
+            return lambda p: method(p)
+
         def on_cmd_set_color(self, payload: str) -> None:
             pass
 
@@ -250,6 +253,9 @@ def test_subscribe_component_topics_subscribes_hyphenated_actions(client, fake_p
     class FakeComponent:
         def capabilities(self):
             return ["set-range-percent", "effect/rainbow-cycle"]
+
+        def _make_cmd_handler(self, action, method):
+            return lambda p: method(p)
 
         def on_cmd_set_range_percent(self, payload: str) -> None:
             pass
