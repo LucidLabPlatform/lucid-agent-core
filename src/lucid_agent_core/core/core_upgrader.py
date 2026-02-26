@@ -3,6 +3,7 @@ Agent Core self-upgrade handler.
 
 Downloads wheel from GitHub release, verifies SHA256, upgrades venv, restarts service.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -185,7 +186,9 @@ def handle_core_upgrade(raw_payload: str) -> UpgradeResult:
         with tempfile.TemporaryDirectory() as tmp:
             wheel_filename = req.wheel_url.split("/")[-1]
             wheel_path = Path(tmp) / wheel_filename
-            _download_with_limits(req.wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES)
+            _download_with_limits(
+                req.wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES
+            )
             _verify_sha256(wheel_path, expected=req.sha256)
             pip_out, pip_err = _pip_upgrade(wheel_path)
 

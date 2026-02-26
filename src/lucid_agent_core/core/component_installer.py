@@ -4,6 +4,7 @@ Component installer — handles MQTT install commands.
 Downloads wheels from GitHub releases, verifies SHA256, runs pip install,
 updates the registry, and optionally triggers agent restart.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -21,6 +22,7 @@ from urllib.request import Request, urlopen
 
 try:
     from importlib.metadata import version as _pkg_version
+
     _AGENT_VERSION = _pkg_version("lucid-agent-core")
 except Exception:  # PackageNotFoundError or missing metadata
     _AGENT_VERSION = "0.0.0"
@@ -73,7 +75,9 @@ class InstallRequest:
     def validate(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id:
             raise ValidationError("request_id must be a non-empty string")
-        if not isinstance(self.component_id, str) or not _COMPONENT_ID_RE.fullmatch(self.component_id):
+        if not isinstance(self.component_id, str) or not _COMPONENT_ID_RE.fullmatch(
+            self.component_id
+        ):
             raise ValidationError(f"component_id must match ^[a-z0-9_]+$: {self.component_id}")
         self.source.validate()
 
@@ -124,7 +128,12 @@ def handle_install_component(raw_payload: str) -> InstallResult:
 
         # Idempotency: if same repo + version already installed, do nothing.
         existing_entrypoint = existing.get("entrypoint", "") if isinstance(existing, dict) else ""
-        if is_same_install(existing, f"{req.source.owner}/{req.source.repo}", req.source.version, existing_entrypoint):
+        if is_same_install(
+            existing,
+            f"{req.source.owner}/{req.source.repo}",
+            req.source.version,
+            existing_entrypoint,
+        ):
             return InstallResult(
                 request_id=req.request_id,
                 component_id=req.component_id,
@@ -142,7 +151,9 @@ def handle_install_component(raw_payload: str) -> InstallResult:
 
         with tempfile.TemporaryDirectory() as tmp:
             wheel_path = Path(tmp) / asset
-            _download_with_limits(wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES)
+            _download_with_limits(
+                wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES
+            )
             _verify_sha256(wheel_path, expected=req.source.sha256)
             pip_out, pip_err = _pip_install(wheel_path, component_id=req.component_id)
 
@@ -184,7 +195,9 @@ def handle_install_component(raw_payload: str) -> InstallResult:
         )
 
     except Exception as exc:
-        logger.exception("Install failed component=%s version=%s", req.component_id, req.source.version)
+        logger.exception(
+            "Install failed component=%s version=%s", req.component_id, req.source.version
+        )
         return InstallResult(
             request_id=req.request_id,
             component_id=req.component_id,
@@ -235,10 +248,13 @@ def _parse_and_validate(raw_payload: str) -> InstallRequest:
 def _fetch_release_asset(owner: str, repo: str, tag: str) -> str:
     """Fetch .whl asset filename from GitHub releases API for the given tag."""
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
-    api_req = Request(url, headers={
-        "User-Agent": f"lucid-agent-core/{_AGENT_VERSION}",
-        "Accept": "application/vnd.github+json",
-    })
+    api_req = Request(
+        url,
+        headers={
+            "User-Agent": f"lucid-agent-core/{_AGENT_VERSION}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
     try:
         with urlopen(api_req, timeout=DOWNLOAD_TIMEOUT_S) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -256,12 +272,13 @@ def _fetch_release_asset(owner: str, repo: str, tag: str) -> str:
 def _discover_entrypoint(component_id: str) -> str:
     """Discover component entrypoint via importlib.metadata entry_points after install."""
     from importlib.metadata import entry_points
+
     for ep in entry_points(group="lucid_components"):
         if ep.name == component_id:
             return ep.value
     raise ValidationError(
         f"no entry point for component_id={component_id!r} in group 'lucid_components'; "
-        "ensure the wheel declares [project.entry-points.\"lucid_components\"]"
+        'ensure the wheel declares [project.entry-points."lucid_components"]'
     )
 
 

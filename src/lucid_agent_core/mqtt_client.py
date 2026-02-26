@@ -34,11 +34,13 @@ class StatusPayload:
     uptime_s: float
 
     def to_json(self) -> str:
-        return json.dumps({
-            "state": self.state,
-            "connected_since_ts": self.connected_since_ts,
-            "uptime_s": self.uptime_s,
-        })
+        return json.dumps(
+            {
+                "state": self.state,
+                "connected_since_ts": self.connected_since_ts,
+                "uptime_s": self.uptime_s,
+            }
+        )
 
 
 class AgentMQTTClient:
@@ -71,9 +73,7 @@ class AgentMQTTClient:
         self.client_id = f"lucid.agent.{username}"
 
         self._client: Optional[mqtt.Client] = None
-        self._executor = ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="mqtt-cmd"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="mqtt-cmd")
 
         self._ctx: Optional[Any] = None
         self._handlers: dict[str, Callable[[str], None]] = {}
@@ -86,11 +86,13 @@ class AgentMQTTClient:
         self._hb_stop_event = threading.Event()
         self._hb_interval_lock = threading.Lock()
         self._hb_interval_s = heartbeat_interval_s
-        
+
         # Telemetry tracking
         self._telemetry_thread: Optional[threading.Thread] = None
         self._telemetry_stop_event = threading.Event()
-        self._telemetry_last: dict[str, tuple[Any, float]] = {}  # metric -> (value, last_publish_ts)
+        self._telemetry_last: dict[
+            str, tuple[Any, float]
+        ] = {}  # metric -> (value, last_publish_ts)
 
         # Per-component cmd topics (for unsubscribe on stop)
         self._component_cmd_topics: dict[str, set[str]] = {}
@@ -108,18 +110,18 @@ class AgentMQTTClient:
         Convert command action path (e.g. "effect/color-wipe") to handler name.
         """
         return "on_cmd_" + action.replace("/", "_").replace("-", "_")
-    
+
     def _setup_mqtt_logging(self) -> None:
         """Set up MQTT logging handler for core logs."""
         try:
             from lucid_agent_core.core.mqtt_log_handler import MQTTLogHandler
-            
+
             # Only add handler if not already added
             root_logger = logging.getLogger()
             for handler in root_logger.handlers:
                 if isinstance(handler, MQTTLogHandler) and handler.topic == self.topics.logs():
                     return  # Already added
-            
+
             # Create and add handler
             handler = MQTTLogHandler(self, self.topics.logs())
             handler.setLevel(logging.DEBUG)  # Handler level, actual filtering done by logger level
@@ -178,12 +180,12 @@ class AgentMQTTClient:
             cid = getattr(comp, "component_id", None)
             if not cid:
                 continue
-            
+
             # Enforce enabled gating
             if cid in registry and registry[cid].get("enabled") is False:
                 logger.info("Skipping cmd subscriptions for disabled component: %s", cid)
                 continue
-            
+
             caps = getattr(comp, "capabilities", None)
             cap_list = list(caps()) if callable(caps) else []
             topics_for_cid = self._component_cmd_topics.setdefault(cid, set())
@@ -198,7 +200,7 @@ class AgentMQTTClient:
                     continue
                 if topic in self._handlers:
                     continue
-                self._handlers[topic] = lambda p, m=method: m(p)
+                self._handlers[topic] = comp._make_cmd_handler(action, method)
                 self._client.subscribe(topic, qos=1)
                 topics_for_cid.add(topic)
                 logger.info("Subscribed: %s", topic)
@@ -207,7 +209,7 @@ class AgentMQTTClient:
             if callable(on_cfg_set):
                 cfg_set_topic = self.topics.component_cmd_cfg_set(cid)
                 if cfg_set_topic not in self._handlers:
-                    self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
+                    self._handlers[cfg_set_topic] = comp._make_cmd_handler("cfg/set", on_cfg_set)
                     self._client.subscribe(cfg_set_topic, qos=1)
                     topics_for_cid.add(cfg_set_topic)
                     logger.info("Subscribed: %s", cfg_set_topic)
@@ -229,7 +231,7 @@ class AgentMQTTClient:
         comp = self.get_component(component_id)
         if comp is None:
             return False
-        
+
         try:
             comp.stop()
             logger.info("Stopped component: %s", component_id)
@@ -237,9 +239,13 @@ class AgentMQTTClient:
             if hasattr(comp, "_publish_all_retained"):
                 try:
                     comp._publish_all_retained()
-                    logger.info("Republished retained topics for stopped component: %s", component_id)
+                    logger.info(
+                        "Republished retained topics for stopped component: %s", component_id
+                    )
                 except Exception as exc:
-                    logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
+                    logger.warning(
+                        "Failed to republish retained topics for %s: %s", component_id, exc
+                    )
         except Exception as exc:
             logger.exception("Failed to stop component %s: %s", component_id, exc)
             return False
@@ -265,11 +271,11 @@ class AgentMQTTClient:
         """
         from lucid_agent_core.components.loader import load_registry
         from lucid_agent_core.components.registry import load_registry as _load_registry
-        
+
         reg = registry if registry else _load_registry()
         if component_id not in reg:
             return False
-        
+
         meta = reg[component_id]
         if meta.get("enabled") is False:
             return False
@@ -278,18 +284,22 @@ class AgentMQTTClient:
         comp = self.get_component(component_id)
         if comp is not None:
             from lucid_component_base import ComponentStatus
-            
+
             # Check current status
             current_status = None
             if hasattr(comp, "state") and hasattr(comp.state, "status"):
                 current_status = comp.state.status
-                logger.info("Component %s found, current status: %s", component_id, current_status.value)
+                logger.info(
+                    "Component %s found, current status: %s", component_id, current_status.value
+                )
             else:
                 logger.warning("Component %s found but missing state attribute", component_id)
-            
+
             # If already running, just resubscribe and republish
             if current_status == ComponentStatus.RUNNING:
-                logger.info("Component %s already running, resubscribing and republishing", component_id)
+                logger.info(
+                    "Component %s already running, resubscribing and republishing", component_id
+                )
                 self._subscribe_component_topics(comp, component_id)
                 # Republish retained topics (metadata, status, state, cfg)
                 # to ensure subscribers get fresh data after enable
@@ -298,12 +308,18 @@ class AgentMQTTClient:
                         comp._publish_all_retained()
                         logger.info("Republished retained topics for component: %s", component_id)
                     except Exception as exc:
-                        logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
+                        logger.warning(
+                            "Failed to republish retained topics for %s: %s", component_id, exc
+                        )
                 return True
-            
+
             # If stopped or failed, try to start it
             if current_status in (ComponentStatus.STOPPED, ComponentStatus.FAILED, None):
-                logger.info("Component %s is %s, attempting to start", component_id, current_status.value if current_status else "unknown")
+                logger.info(
+                    "Component %s is %s, attempting to start",
+                    component_id,
+                    current_status.value if current_status else "unknown",
+                )
                 try:
                     comp.start()
                     logger.info("Successfully started component: %s", component_id)
@@ -313,22 +329,32 @@ class AgentMQTTClient:
                     if hasattr(comp, "_publish_all_retained"):
                         try:
                             comp._publish_all_retained()
-                            logger.info("Republished retained topics for component: %s", component_id)
+                            logger.info(
+                                "Republished retained topics for component: %s", component_id
+                            )
                         except Exception as exc:
-                            logger.warning("Failed to republish retained topics for %s: %s", component_id, exc)
+                            logger.warning(
+                                "Failed to republish retained topics for %s: %s", component_id, exc
+                            )
                     return True
                 except Exception as exc:
                     logger.exception("Failed to start component %s: %s", component_id, exc)
                     return False
-            
+
             # If in STARTING or STOPPING state, wait a bit and check again
             if current_status in (ComponentStatus.STARTING, ComponentStatus.STOPPING):
-                logger.warning("Component %s is in transitional state %s, cannot start now", component_id, current_status.value)
+                logger.warning(
+                    "Component %s is in transitional state %s, cannot start now",
+                    component_id,
+                    current_status.value,
+                )
                 return False
 
         # Component not loaded - would need to load it, but that's complex
         # For now, return False and require restart
-        logger.warning("Component %s not loaded; restart agent to load disabled components", component_id)
+        logger.warning(
+            "Component %s not loaded; restart agent to load disabled components", component_id
+        )
         return False
 
     def _subscribe_component_topics(self, comp: Any, component_id: str) -> None:
@@ -349,7 +375,7 @@ class AgentMQTTClient:
                 continue
             if topic in self._handlers:
                 continue
-            self._handlers[topic] = lambda p, m=method: m(p)
+            self._handlers[topic] = comp._make_cmd_handler(action, method)
             self._client.subscribe(topic, qos=1)
             topics_for_cid.add(topic)
             logger.info("Subscribed: %s", topic)
@@ -357,7 +383,7 @@ class AgentMQTTClient:
         if callable(on_cfg_set):
             cfg_set_topic = self.topics.component_cmd_cfg_set(component_id)
             if cfg_set_topic not in self._handlers:
-                self._handlers[cfg_set_topic] = lambda p, m=on_cfg_set: m(p)
+                self._handlers[cfg_set_topic] = comp._make_cmd_handler("cfg/set", on_cfg_set)
                 self._client.subscribe(cfg_set_topic, qos=1)
                 topics_for_cid.add(cfg_set_topic)
                 logger.info("Subscribed: %s", cfg_set_topic)
@@ -370,6 +396,7 @@ class AgentMQTTClient:
         if not self._ctx or not self._client:
             return
         from lucid_agent_core.core.snapshots import build_state
+
         state = build_state(components_list)
         self._ctx.publish(self.topics.state(), state, retain=True, qos=1)
         logger.info("Published retained state with %d components", len(components_list))
@@ -389,6 +416,7 @@ class AgentMQTTClient:
             build_cfg_logging,
             build_cfg_telemetry,
         )
+
         ctx = self._ctx
         metadata = build_metadata(ctx.agent_id, self.version)
         ctx.publish(self.topics.metadata(), metadata, retain=True, qos=1)
@@ -407,7 +435,9 @@ class AgentMQTTClient:
         ctx.publish(self.topics.cfg(), build_cfg(raw_cfg), retain=True, qos=1)
         ctx.publish(self.topics.cfg_logging(), build_cfg_logging(raw_cfg), retain=True, qos=1)
         ctx.publish(self.topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1)
-        logger.info("Published retained refresh (metadata, status, state, cfg, cfg/logging, cfg/telemetry)")
+        logger.info(
+            "Published retained refresh (metadata, status, state, cfg, cfg/logging, cfg/telemetry)"
+        )
 
     def set_heartbeat_interval(self, interval_s: int) -> None:
         with self._hb_interval_lock:
@@ -460,26 +490,28 @@ class AgentMQTTClient:
                 except Exception as exc:
                     logger.error("Heartbeat publish failed: %s", exc)
 
-    def _should_publish_telemetry(self, metric: str, value: Any, metric_cfg: dict[str, Any]) -> bool:
+    def _should_publish_telemetry(
+        self, metric: str, value: Any, metric_cfg: dict[str, Any]
+    ) -> bool:
         """
         Check if telemetry should be published for a metric based on its config.
         Returns True if enabled and (delta > threshold or interval exceeded).
         """
         if not metric_cfg.get("enabled", False):
             return False
-        
+
         interval_s = max(1, metric_cfg.get("interval_s", 2))
         threshold = max(0.0, metric_cfg.get("change_threshold_percent", 2.0))
         now = time.time()
         last = self._telemetry_last.get(metric)
-        
+
         if last is None:
             return True
-        
+
         last_value, last_ts = last
         if now - last_ts >= interval_s:
             return True
-        
+
         try:
             if isinstance(last_value, (int, float)) and isinstance(value, (int, float)):
                 if last_value == 0:
@@ -497,9 +529,10 @@ class AgentMQTTClient:
                 if self._telemetry_stop_event.wait(timeout=1.0):
                     break
                 continue
-            
+
             try:
                 from lucid_agent_core.core.snapshots import build_cfg_telemetry
+
                 raw_cfg = self._ctx.config_store.get_cached()
                 metrics_cfg = build_cfg_telemetry(raw_cfg)
 
@@ -508,31 +541,33 @@ class AgentMQTTClient:
                     if self._telemetry_stop_event.wait(timeout=2.0):
                         break
                     continue
-                
+
                 # Get current state values
                 from lucid_agent_core.core.snapshots import (
                     _system_cpu_percent,
                     _system_memory_percent,
                     _system_disk_percent,
                 )
-                
+
                 state_values = {
                     "cpu_percent": _system_cpu_percent(),
                     "memory_percent": _system_memory_percent(),
                     "disk_percent": _system_disk_percent(),
                 }
-                
+
                 # Publish telemetry for each enabled metric
                 published_count = 0
                 for metric_name, metric_cfg in metrics_cfg.items():
                     if not isinstance(metric_cfg, dict):
                         logger.debug("Telemetry loop: skipping %s (not a dict)", metric_name)
                         continue
-                    
+
                     if metric_name not in state_values:
-                        logger.debug("Telemetry loop: skipping %s (not in state_values)", metric_name)
+                        logger.debug(
+                            "Telemetry loop: skipping %s (not in state_values)", metric_name
+                        )
                         continue
-                    
+
                     value = state_values[metric_name]
                     if self._should_publish_telemetry(metric_name, value, metric_cfg):
                         try:
@@ -545,16 +580,19 @@ class AgentMQTTClient:
                         except Exception as exc:
                             logger.warning("Failed to publish telemetry %s: %s", metric_name, exc)
                     else:
-                        logger.debug("Telemetry loop: skipping %s (should_publish returned False, enabled=%s)", 
-                                   metric_name, metric_cfg.get("enabled", False))
-                
+                        logger.debug(
+                            "Telemetry loop: skipping %s (should_publish returned False, enabled=%s)",
+                            metric_name,
+                            metric_cfg.get("enabled", False),
+                        )
+
                 if published_count == 0:
                     logger.debug("Telemetry loop: no metrics published this cycle")
-                
+
                 # Sleep for minimum interval (check configs more frequently)
                 if self._telemetry_stop_event.wait(timeout=1.0):
                     break
-                    
+
             except Exception as exc:
                 logger.exception("Telemetry loop error: %s", exc)
                 if self._telemetry_stop_event.wait(timeout=2.0):
@@ -564,17 +602,24 @@ class AgentMQTTClient:
         """Start telemetry publishing thread if not already running."""
         if self._telemetry_thread:
             return
-        
+
         # Log current telemetry config state
         if self._ctx:
             from lucid_agent_core.core.snapshots import build_cfg_telemetry
+
             raw_cfg = self._ctx.config_store.get_cached()
             metrics_cfg = build_cfg_telemetry(raw_cfg)
-            enabled_metrics = [name for name, mcfg in metrics_cfg.items()
-                             if isinstance(mcfg, dict) and mcfg.get("enabled", False)]
-            logger.info("Starting telemetry thread. Enabled metrics: %s (total metrics: %d)",
-                       enabled_metrics if enabled_metrics else "none", len(metrics_cfg))
-        
+            enabled_metrics = [
+                name
+                for name, mcfg in metrics_cfg.items()
+                if isinstance(mcfg, dict) and mcfg.get("enabled", False)
+            ]
+            logger.info(
+                "Starting telemetry thread. Enabled metrics: %s (total metrics: %d)",
+                enabled_metrics if enabled_metrics else "none",
+                len(metrics_cfg),
+            )
+
         self._telemetry_stop_event.clear()
         self._telemetry_thread = threading.Thread(
             target=self._telemetry_loop,
@@ -610,7 +655,14 @@ class AgentMQTTClient:
             retain=True,
         )
 
-    def _on_connect(self, client: mqtt.Client, userdata: Any, connect_flags: Any, reason_code: Any, properties: Any) -> None:
+    def _on_connect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        connect_flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
         if reason_code != 0:
             logger.error("MQTT connect failed: %s", reason_code)
             return
@@ -664,11 +716,18 @@ class AgentMQTTClient:
             interval = self._hb_interval_s
         if interval > 0:
             self._start_heartbeat()
-        
+
         # Start telemetry thread
         self._start_telemetry()
 
-    def _on_disconnect(self, client: mqtt.Client, userdata: Any, disconnect_flags: Any, reason_code: Any, properties: Any) -> None:
+    def _on_disconnect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        disconnect_flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
         if reason_code != 0:
             logger.warning("Unexpected disconnect: %s", reason_code)
         self._stop_heartbeat()
@@ -692,8 +751,10 @@ class AgentMQTTClient:
             if self._connected_since_ts is None:
                 self._connected_since_ts = _utc_iso()
                 self._connected_ts = time.time()
-            
-            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id, protocol=mqtt.MQTTv311)
+
+            client = mqtt.Client(
+                mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id, protocol=mqtt.MQTTv311
+            )
             client.username_pw_set(self.username, self.password)
 
             # LWT is minimal: set once at connect; broker publishes on disconnect/crash.

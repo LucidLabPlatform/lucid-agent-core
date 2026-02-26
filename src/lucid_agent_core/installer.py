@@ -52,7 +52,7 @@ def _ensure_root() -> None:
 def _ensure_user() -> None:
     """
     Ensure system user exists.
-    
+
     Creates user 'lucid' with:
     - Home directory: /home/lucid
     - Shell: /bin/bash
@@ -63,20 +63,24 @@ def _ensure_user() -> None:
         print(f"User '{SYSTEM_USER}' already exists")
     except subprocess.CalledProcessError:
         print(f"Creating user '{SYSTEM_USER}'...")
-        _run([
-            "useradd",
-            "-m",  # Create home directory
-            "-d", f"/home/{SYSTEM_USER}",
-            "-s", "/bin/bash",
-            SYSTEM_USER,
-        ])
+        _run(
+            [
+                "useradd",
+                "-m",  # Create home directory
+                "-d",
+                f"/home/{SYSTEM_USER}",
+                "-s",
+                "/bin/bash",
+                SYSTEM_USER,
+            ]
+        )
         print(f"User '{SYSTEM_USER}' created successfully")
 
 
 def _ensure_dirs() -> None:
     """
     Create required directories with secure permissions.
-    
+
     Creates:
     - /home/lucid/lucid-agent-core/ (base)
     - /home/lucid/lucid-agent-core/venv
@@ -172,7 +176,7 @@ def _create_venv() -> None:
 def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
     """
     Install lucid-agent-core into the venv.
-    
+
     Args:
         wheel_path: Optional path to local wheel file.
                    If provided, installs from local wheel.
@@ -181,7 +185,7 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
     # Ensure permissions are correct before installing (critical for upgrades)
     _ensure_venv_permissions()
     _ensure_pip_cache()
-    
+
     pip = VENV_DIR / "bin" / "pip"
 
     if not pip.exists():
@@ -191,7 +195,7 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
         # Install from local wheel
         if not wheel_path.exists():
             raise FileNotFoundError(f"Wheel file not found: {wheel_path}")
-        
+
         print(f"Installing from local wheel: {wheel_path}")
         # Run pip as SYSTEM_USER to ensure correct ownership of installed files
         _run(["sudo", "-u", SYSTEM_USER, str(pip), "install", "--upgrade", str(wheel_path)])
@@ -203,7 +207,7 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
             f"releases/download/v{version}/"
             f"lucid_agent_core-{version}-py3-none-any.whl"
         )
-        
+
         print(f"Installing from GitHub release: {wheel_url}")
         # Run pip as SYSTEM_USER to ensure correct ownership of installed files
         _run(["sudo", "-u", SYSTEM_USER, str(pip), "install", "--upgrade", wheel_url])
@@ -215,7 +219,7 @@ def _install_cli_into_venv(wheel_path: Optional[Path] = None) -> None:
     cli = VENV_DIR / "bin" / "lucid-agent-core"
     if not cli.exists():
         raise RuntimeError("CLI executable missing after installation.")
-    
+
     print(f"Installation successful: {cli}")
 
 
@@ -227,9 +231,8 @@ def _write_systemd_unit() -> None:
     from importlib import resources
 
     try:
-        unit_template = (
-            resources.files("lucid_agent_core")
-            .joinpath("systemd/lucid-agent-core.service")
+        unit_template = resources.files("lucid_agent_core").joinpath(
+            "systemd/lucid-agent-core.service"
         )
 
         with unit_template.open("r", encoding="utf-8") as f:
@@ -255,21 +258,21 @@ def _reload_and_enable() -> None:
 def install_service(wheel_path: Optional[Path] = None) -> None:
     """
     Install and enable lucid-agent-core systemd service.
-    
+
     Args:
         wheel_path: Optional path to local wheel file.
                    If not provided, checks LUCID_AGENT_CORE_WHEEL env var.
                    If still not found, installs from GitHub release.
     """
     _ensure_root()
-    
+
     # Check for wheel path from env var if not provided as argument
     if wheel_path is None:
         env_wheel = os.environ.get("LUCID_AGENT_CORE_WHEEL")
         if env_wheel:
             wheel_path = Path(env_wheel)
             print(f"Using wheel from LUCID_AGENT_CORE_WHEEL: {wheel_path}")
-    
+
     _ensure_user()
     _ensure_dirs()
     _ensure_env_file()
@@ -278,16 +281,16 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     _write_systemd_unit()
     _reload_and_enable()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"✓ {SERVICE_NAME} installed and enabled successfully!")
-    print("="*60)
+    print("=" * 60)
     print(f"Base directory: {BASE_DIR}")
     print(f"Configuration: {ENV_PATH}")
     print(f"\nNext steps:")
     print(f"1. Edit {ENV_PATH} with your MQTT credentials")
     print(f"2. Start the service: sudo systemctl start {SERVICE_NAME}")
     print(f"3. Check status: sudo systemctl status {SERVICE_NAME}")
-    print("="*60)
+    print("=" * 60)
 
 
 def install_led_strip_helper() -> None:

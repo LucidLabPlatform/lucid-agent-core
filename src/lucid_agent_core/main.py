@@ -87,6 +87,7 @@ def run_agent() -> int:
     heartbeat_s = runtime_cfg.get("heartbeat_s", cfg.agent_heartbeat_s)
 
     from lucid_agent_core.core.log_config import apply_log_level_from_config
+
     apply_log_level_from_config(runtime_cfg)
 
     logger.info("Runtime config loaded: %s", runtime_cfg)
@@ -146,7 +147,10 @@ def run_agent() -> int:
     )
     logger.info(
         "Component load results: %s",
-        [asdict(r) if (is_dataclass(r) and not isinstance(r, type)) else repr(r) for r in load_results],
+        [
+            asdict(r) if (is_dataclass(r) and not isinstance(r, type)) else repr(r)
+            for r in load_results
+        ],
     )
 
     rt.components = components
@@ -154,8 +158,9 @@ def run_agent() -> int:
     # Load registry for component state and gating
     from lucid_agent_core.components.registry import load_registry
     from lucid_agent_core.core.snapshots import build_components_list
+
     registry = load_registry()
-    
+
     components_list = build_components_list(registry, components=components)
     agent.add_component_handlers(components, registry)
     agent.publish_retained_state(components_list)

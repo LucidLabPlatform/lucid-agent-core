@@ -57,7 +57,9 @@ def request_systemd_restart(reason: str = "restart requested") -> bool:
                 return False
 
         sentinel_path.parent.mkdir(parents=True, exist_ok=True)
-        sentinel_path.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))} {reason}\n")
+        sentinel_path.write_text(
+            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))} {reason}\n"
+        )
 
     except Exception:
         # Sentinel failure should not prevent restart.
