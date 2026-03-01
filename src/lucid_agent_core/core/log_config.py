@@ -40,7 +40,7 @@ def apply_log_level(level: int) -> None:
 def apply_log_level_from_config(cfg: dict[str, Any] | None) -> None:
     """
     Resolve level from config (or env) and apply to root logger.
-    Call at startup and after cfg is updated via cmd/cfg/set.
+    Call at startup and after logging cfg is updated via cmd/cfg/logging/set.
     """
     level = level_from_cfg_or_env(cfg)
     apply_log_level(level)

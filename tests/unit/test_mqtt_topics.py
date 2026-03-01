@@ -18,6 +18,9 @@ def test_agent_topic_paths() -> None:
     assert t.cmd_ping() == "lucid/agents/agent_1/cmd/ping"
     assert t.cmd_restart() == "lucid/agents/agent_1/cmd/restart"
     assert t.cmd_refresh() == "lucid/agents/agent_1/cmd/refresh"
+    assert t.cmd_cfg_set() == "lucid/agents/agent_1/cmd/cfg/set"
+    assert t.cmd_cfg_logging_set() == "lucid/agents/agent_1/cmd/cfg/logging/set"
+    assert t.cmd_cfg_telemetry_set() == "lucid/agents/agent_1/cmd/cfg/telemetry/set"
     assert t.cmd_components_install() == "lucid/agents/agent_1/cmd/components/install"
     assert t.cmd_components_uninstall() == "lucid/agents/agent_1/cmd/components/uninstall"
     assert t.cmd_components_enable() == "lucid/agents/agent_1/cmd/components/enable"
@@ -36,6 +39,14 @@ def test_component_topic_paths() -> None:
     assert t.component_cmd_reset("cpu") == "lucid/agents/agent_1/components/cpu/cmd/reset"
     assert t.component_cmd_ping("cpu") == "lucid/agents/agent_1/components/cpu/cmd/ping"
     assert t.component_cmd_cfg_set("cpu") == "lucid/agents/agent_1/components/cpu/cmd/cfg/set"
+    assert (
+        t.component_cmd_cfg_logging_set("cpu")
+        == "lucid/agents/agent_1/components/cpu/cmd/cfg/logging/set"
+    )
+    assert (
+        t.component_cmd_cfg_telemetry_set("cpu")
+        == "lucid/agents/agent_1/components/cpu/cmd/cfg/telemetry/set"
+    )
     assert t.component_cmd("led_strip", "clear") == "lucid/agents/agent_1/components/led_strip/cmd/clear"
     assert t.component_cmd("led_strip", "effect/glow") == "lucid/agents/agent_1/components/led_strip/cmd/effect/glow"
 

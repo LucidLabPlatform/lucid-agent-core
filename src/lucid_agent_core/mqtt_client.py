@@ -140,6 +140,8 @@ class AgentMQTTClient:
             on_restart,
             on_refresh,
             on_cfg_set,
+            on_cfg_logging_set,
+            on_cfg_telemetry_set,
             on_components_install,
             on_components_uninstall,
             on_components_enable,
@@ -154,6 +156,8 @@ class AgentMQTTClient:
             self.topics.cmd_restart(): lambda p: on_restart(ctx, p),
             self.topics.cmd_refresh(): lambda p: on_refresh(ctx, p),
             self.topics.cmd_cfg_set(): lambda p: on_cfg_set(ctx, p),
+            self.topics.cmd_cfg_logging_set(): lambda p: on_cfg_logging_set(ctx, p),
+            self.topics.cmd_cfg_telemetry_set(): lambda p: on_cfg_telemetry_set(ctx, p),
             self.topics.cmd_components_install(): lambda p: on_components_install(ctx, p),
             self.topics.cmd_components_uninstall(): lambda p: on_components_uninstall(ctx, p),
             self.topics.cmd_components_enable(): lambda p: on_components_enable(ctx, p),
@@ -165,7 +169,7 @@ class AgentMQTTClient:
 
     def add_component_handlers(self, components: list[Any], registry: dict[str, dict]) -> None:
         """
-        Subscribe to each component's cmd/reset, cmd/ping, cmd/cfg/set topics.
+        Subscribe to each component's cmd/reset, cmd/ping, cmd/cfg/*/set topics.
         Call after connect() and load_components().
         Enforces enabled gating: only subscribe if component is enabled in registry.
         """
@@ -213,6 +217,28 @@ class AgentMQTTClient:
                     self._client.subscribe(cfg_set_topic, qos=1)
                     topics_for_cid.add(cfg_set_topic)
                     logger.info("Subscribed: %s", cfg_set_topic)
+
+            on_cfg_logging_set = getattr(comp, "on_cmd_cfg_logging_set", None)
+            if callable(on_cfg_logging_set):
+                cfg_logging_set_topic = self.topics.component_cmd_cfg_logging_set(cid)
+                if cfg_logging_set_topic not in self._handlers:
+                    self._handlers[cfg_logging_set_topic] = comp._make_cmd_handler(
+                        "cfg/logging/set", on_cfg_logging_set
+                    )
+                    self._client.subscribe(cfg_logging_set_topic, qos=1)
+                    topics_for_cid.add(cfg_logging_set_topic)
+                    logger.info("Subscribed: %s", cfg_logging_set_topic)
+
+            on_cfg_telemetry_set = getattr(comp, "on_cmd_cfg_telemetry_set", None)
+            if callable(on_cfg_telemetry_set):
+                cfg_telemetry_set_topic = self.topics.component_cmd_cfg_telemetry_set(cid)
+                if cfg_telemetry_set_topic not in self._handlers:
+                    self._handlers[cfg_telemetry_set_topic] = comp._make_cmd_handler(
+                        "cfg/telemetry/set", on_cfg_telemetry_set
+                    )
+                    self._client.subscribe(cfg_telemetry_set_topic, qos=1)
+                    topics_for_cid.add(cfg_telemetry_set_topic)
+                    logger.info("Subscribed: %s", cfg_telemetry_set_topic)
 
     def get_component(self, component_id: str) -> Optional[Any]:
         """Get a component by ID. Returns None if not found."""
@@ -387,6 +413,28 @@ class AgentMQTTClient:
                 self._client.subscribe(cfg_set_topic, qos=1)
                 topics_for_cid.add(cfg_set_topic)
                 logger.info("Subscribed: %s", cfg_set_topic)
+
+        on_cfg_logging_set = getattr(comp, "on_cmd_cfg_logging_set", None)
+        if callable(on_cfg_logging_set):
+            cfg_logging_set_topic = self.topics.component_cmd_cfg_logging_set(component_id)
+            if cfg_logging_set_topic not in self._handlers:
+                self._handlers[cfg_logging_set_topic] = comp._make_cmd_handler(
+                    "cfg/logging/set", on_cfg_logging_set
+                )
+                self._client.subscribe(cfg_logging_set_topic, qos=1)
+                topics_for_cid.add(cfg_logging_set_topic)
+                logger.info("Subscribed: %s", cfg_logging_set_topic)
+
+        on_cfg_telemetry_set = getattr(comp, "on_cmd_cfg_telemetry_set", None)
+        if callable(on_cfg_telemetry_set):
+            cfg_telemetry_set_topic = self.topics.component_cmd_cfg_telemetry_set(component_id)
+            if cfg_telemetry_set_topic not in self._handlers:
+                self._handlers[cfg_telemetry_set_topic] = comp._make_cmd_handler(
+                    "cfg/telemetry/set", on_cfg_telemetry_set
+                )
+                self._client.subscribe(cfg_telemetry_set_topic, qos=1)
+                topics_for_cid.add(cfg_telemetry_set_topic)
+                logger.info("Subscribed: %s", cfg_telemetry_set_topic)
 
     def publish_retained_state(self, components_list: list[dict[str, Any]]) -> None:
         """
