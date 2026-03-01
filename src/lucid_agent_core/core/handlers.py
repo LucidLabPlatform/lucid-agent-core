@@ -1,7 +1,8 @@
 """
 Core command handlers for LUCID Agent Core — unified v1.0.0 contract.
 
-Commands: cmd/ping, cmd/restart, cmd/refresh, cmd/cfg/set, cmd/components/{install,uninstall,enable,disable,upgrade}, cmd/core/upgrade.
+Commands: cmd/ping, cmd/restart, cmd/refresh, cmd/cfg/set, cmd/cfg/logging/set,
+cmd/cfg/telemetry/set, cmd/components/{install,uninstall,enable,disable,upgrade}, cmd/core/upgrade.
 Results: evt/<action>/result with { request_id, ok, error }.
 """
 
@@ -422,7 +423,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
 
 def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
     """
-    Handle cmd/cfg/set: merge payload["set"] into config, save, republish cfg/cfg_logging/cfg_telemetry, apply log_level.
+    Handle cmd/cfg/set for retained /cfg domain (general settings only).
     Result on evt/cfg/set/result.
     """
     try:
@@ -434,31 +435,85 @@ def on_cfg_set(ctx: CoreCommandContext, payload_str: str) -> None:
     if _check_duplicate(ctx, request_id, ctx.topics.evt_result("cfg/set")):
         return
 
-    new_cfg, result = ctx.config_store.apply_set(payload)
+    new_cfg, result = ctx.config_store.apply_set_general(payload)
     result["request_id"] = request_id
 
     if result.get("ok"):
-        apply_log_level_from_config(new_cfg)
-        from lucid_agent_core.core.snapshots import (
-            build_cfg,
-            build_cfg_logging,
-            build_cfg_telemetry,
-        )
+        from lucid_agent_core.core.snapshots import build_cfg
 
         ctx.publish(ctx.topics.cfg(), build_cfg(new_cfg), retain=True, qos=1)
-        ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(new_cfg), retain=True, qos=1)
-        ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(new_cfg), retain=True, qos=1)
         # Apply heartbeat interval so runtime follows config immediately
         if "heartbeat_s" in new_cfg:
             ctx.mqtt.set_heartbeat_interval(int(new_cfg["heartbeat_s"]))
-        # Telemetry thread will pick up config changes automatically
 
     topic = ctx.topics.evt_result("cfg/set")
     ctx.publish(topic, result, retain=False, qos=1)
     if result.get("ok"):
-        logger.info("Config updated via cmd/cfg/set, log_level applied")
+        logger.info("Config updated via cmd/cfg/set")
     else:
         logger.warning("Config set failed: %s", result.get("error"))
+
+
+def on_cfg_logging_set(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/cfg/logging/set for retained /cfg/logging domain.
+    Result on evt/cfg/logging/set/result.
+    """
+    try:
+        payload = _parse_payload(payload_str)
+    except Exception:
+        payload = {}
+    request_id = payload.get("request_id", "")
+
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("cfg/logging/set")):
+        return
+
+    new_cfg, result = ctx.config_store.apply_set_logging(payload)
+    result["request_id"] = request_id
+
+    if result.get("ok"):
+        from lucid_agent_core.core.snapshots import build_cfg_logging
+
+        apply_log_level_from_config(new_cfg)
+        ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(new_cfg), retain=True, qos=1)
+
+    topic = ctx.topics.evt_result("cfg/logging/set")
+    ctx.publish(topic, result, retain=False, qos=1)
+    if result.get("ok"):
+        logger.info("Config updated via cmd/cfg/logging/set")
+    else:
+        logger.warning("Config logging set failed: %s", result.get("error"))
+
+
+def on_cfg_telemetry_set(ctx: CoreCommandContext, payload_str: str) -> None:
+    """
+    Handle cmd/cfg/telemetry/set for retained /cfg/telemetry domain.
+    Result on evt/cfg/telemetry/set/result.
+    """
+    try:
+        payload = _parse_payload(payload_str)
+    except Exception:
+        payload = {}
+    request_id = payload.get("request_id", "")
+
+    if _check_duplicate(ctx, request_id, ctx.topics.evt_result("cfg/telemetry/set")):
+        return
+
+    new_cfg, result = ctx.config_store.apply_set_telemetry(payload)
+    result["request_id"] = request_id
+
+    if result.get("ok"):
+        from lucid_agent_core.core.snapshots import build_cfg_telemetry
+
+        ctx.publish(ctx.topics.cfg_telemetry(), build_cfg_telemetry(new_cfg), retain=True, qos=1)
+        # Telemetry thread will pick up config changes automatically.
+
+    topic = ctx.topics.evt_result("cfg/telemetry/set")
+    ctx.publish(topic, result, retain=False, qos=1)
+    if result.get("ok"):
+        logger.info("Config updated via cmd/cfg/telemetry/set")
+    else:
+        logger.warning("Config telemetry set failed: %s", result.get("error"))
 
 
 def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:

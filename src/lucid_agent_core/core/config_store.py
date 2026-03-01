@@ -30,6 +30,8 @@ ALLOWED_KEYS = {
 MIN_HEARTBEAT = 5
 MAX_HEARTBEAT = 3600
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+CFG_GENERAL_KEYS = {"heartbeat_s"}
+CFG_LOGGING_KEYS = {"log_level"}
 
 
 class ConfigStoreError(RuntimeError):
@@ -241,71 +243,147 @@ class ConfigStore:
 
         return True, None
 
-    def apply_set(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """
-        Apply configuration changes from a set command.
-
-        Expects payload: {request_id, set: {...}}
-        Validates, merges with current config, saves atomically.
-
-        Args:
-            payload: Command payload with request_id and set dict
-
-        Returns:
-            Tuple of (new_config, result_dict)
-            result_dict contains: {request_id, ok, applied, error?, ts, schema}
-        """
+    def _extract_set_dict(
+        self, payload: dict[str, Any]
+    ) -> tuple[str, dict[str, Any], Optional[dict[str, Any]]]:
         ts = _utc_iso()
         request_id = payload.get("request_id", "")
-
-        # Extract set dict
         if "set" not in payload:
-            return self.get_cached(), {
+            return request_id, {}, {
                 "request_id": request_id,
                 "ok": False,
                 "error": "missing 'set' field in payload",
                 "ts": ts,
             }
-
         set_dict = payload["set"]
         if not isinstance(set_dict, dict):
-            return self.get_cached(), {
+            return request_id, {}, {
                 "request_id": request_id,
                 "ok": False,
                 "error": "'set' must be a dict",
                 "ts": ts,
             }
+        return request_id, set_dict, None
 
-        # Merge with current config
+    def _apply_top_level_keys(
+        self, payload: dict[str, Any], *, allowed_keys: set[str]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        request_id, set_dict, error = self._extract_set_dict(payload)
+        if error is not None:
+            return self.get_cached(), error
+        ts = _utc_iso()
         current = self.get_cached().copy()
-        new_cfg = {**current, **set_dict}
 
-        # Deep merge for nested telemetry config (per-metric structure)
-        if "telemetry" in set_dict and "telemetry" in current:
-            current_telemetry = current["telemetry"].copy()
-            set_telemetry = set_dict["telemetry"]
-            # Deep merge metrics dict
-            if "metrics" in set_telemetry and "metrics" in current_telemetry:
-                merged_metrics = current_telemetry["metrics"].copy()
-                for metric_name, metric_cfg in set_telemetry["metrics"].items():
-                    if metric_name in merged_metrics:
-                        merged_metrics[metric_name] = {**merged_metrics[metric_name], **metric_cfg}
-                    else:
-                        merged_metrics[metric_name] = metric_cfg.copy()
-                current_telemetry["metrics"] = merged_metrics
-            elif "metrics" in set_telemetry:
-                current_telemetry["metrics"] = set_telemetry["metrics"].copy()
-            new_cfg["telemetry"] = current_telemetry
-        elif "telemetry" in set_dict:
-            new_cfg["telemetry"] = set_dict["telemetry"].copy()
+        unknown = sorted(k for k in set_dict if k not in allowed_keys)
+        if unknown:
+            return current, {
+                "request_id": request_id,
+                "ok": False,
+                "error": f"unknown config key(s): {', '.join(unknown)}",
+                "ts": ts,
+            }
 
-        # Validate merged config
-        ok, error = self.validate(new_cfg)
+        new_cfg = current.copy()
+        for key in allowed_keys:
+            if key in set_dict:
+                new_cfg[key] = set_dict[key]
+
+        ok, validate_error = self.validate(new_cfg)
         if not ok:
             return current, {
                 "request_id": request_id,
                 "ok": False,
-                "error": error,
+                "error": validate_error,
+                "ts": ts,
+            }
+
+        try:
+            self.save(new_cfg)
+        except ConfigStoreError as exc:
+            return current, {
+                "request_id": request_id,
+                "ok": False,
+                "error": str(exc),
+                "ts": ts,
+            }
+
+        applied = {k: set_dict[k] for k in set_dict.keys() if k in allowed_keys}
+        return new_cfg, {
+            "request_id": request_id,
+            "ok": True,
+            "applied": applied,
+            "ts": ts,
+        }
+
+    def apply_set_general(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Apply cfg/set changes (retained /cfg domain).
+
+        Allowed keys: heartbeat_s.
+        """
+        return self._apply_top_level_keys(payload, allowed_keys=CFG_GENERAL_KEYS)
+
+    def apply_set_logging(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Apply cfg/logging/set changes (retained /cfg/logging domain).
+
+        Allowed keys: log_level.
+        """
+        return self._apply_top_level_keys(payload, allowed_keys=CFG_LOGGING_KEYS)
+
+    def apply_set_telemetry(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """
+        Apply cfg/telemetry/set changes (retained /cfg/telemetry domain).
+
+        Expects payload: {request_id, set: {metric_name: metric_cfg_or_enabled_bool}}
+        where metric_cfg_or_enabled_bool is either:
+        - {enabled?, interval_s?, change_threshold_percent?}
+        - bool (shorthand for enabled)
+
+        Deep-merges per-metric values into telemetry.metrics in the config store.
+        """
+        request_id, set_dict, error = self._extract_set_dict(payload)
+        if error is not None:
+            return self.get_cached(), error
+        ts = _utc_iso()
+        current = self.get_cached().copy()
+        new_cfg = current.copy()
+
+        telemetry_obj = current.get("telemetry", {})
+        if not isinstance(telemetry_obj, dict):
+            telemetry_obj = {}
+        telemetry_obj = telemetry_obj.copy()
+
+        metrics_obj = telemetry_obj.get("metrics", {})
+        if not isinstance(metrics_obj, dict):
+            metrics_obj = {}
+        metrics_obj = metrics_obj.copy()
+
+        for metric_name, metric_cfg in set_dict.items():
+            if isinstance(metric_cfg, bool):
+                metric_cfg = {"enabled": metric_cfg}
+            if not isinstance(metric_cfg, dict):
+                return current, {
+                    "request_id": request_id,
+                    "ok": False,
+                    "error": f"telemetry metric '{metric_name}' must be an object or boolean",
+                    "ts": ts,
+                }
+            existing = metrics_obj.get(metric_name, {})
+            if not isinstance(existing, dict):
+                existing = {}
+            metrics_obj[metric_name] = {**existing, **metric_cfg}
+
+        telemetry_obj["metrics"] = metrics_obj
+        new_cfg["telemetry"] = telemetry_obj
+
+        # Validate merged config
+        ok, validate_error = self.validate(new_cfg)
+        if not ok:
+            return current, {
+                "request_id": request_id,
+                "ok": False,
+                "error": validate_error,
                 "ts": ts,
             }
 

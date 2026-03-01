@@ -29,8 +29,16 @@ class ConfigStore(Protocol):
         """Return cached configuration."""
         ...
 
-    def apply_set(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Apply configuration changes."""
+    def apply_set_general(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Apply general cfg changes (heartbeat_s)."""
+        ...
+
+    def apply_set_logging(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Apply logging cfg changes (log_level)."""
+        ...
+
+    def apply_set_telemetry(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Apply telemetry cfg changes (per-metric configs)."""
         ...
 
 

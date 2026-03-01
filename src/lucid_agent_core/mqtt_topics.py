@@ -117,6 +117,12 @@ class TopicSchema:
     def cmd_cfg_set(self) -> str:
         return f"{self.base}/cmd/cfg/set"
 
+    def cmd_cfg_logging_set(self) -> str:
+        return f"{self.base}/cmd/cfg/logging/set"
+
+    def cmd_cfg_telemetry_set(self) -> str:
+        return f"{self.base}/cmd/cfg/telemetry/set"
+
     # -------------------------
     # Agent results
     # -------------------------
@@ -144,6 +150,12 @@ class TopicSchema:
 
     def component_cmd_cfg_set(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/cmd/cfg/set"
+
+    def component_cmd_cfg_logging_set(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/cmd/cfg/logging/set"
+
+    def component_cmd_cfg_telemetry_set(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/cmd/cfg/telemetry/set"
 
     def component_cmd(self, component_id: str, action: str) -> str:
         """Component command topic for any action, e.g. 'reset', 'clear', 'effect/glow'."""

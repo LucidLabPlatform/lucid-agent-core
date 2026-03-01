@@ -42,10 +42,10 @@ Unified topics under `lucid/agents/<agent_username>/`. No `core/` nesting.
 - `telemetry/<metric>` (e.g. `cpu_percent`, `memory_percent`, `disk_percent`; gated by `cfg.telemetry.metrics.<metric>.enabled`)
 
 ### Agent subscribes (commands)
-- `cmd/ping`, `cmd/restart`, `cmd/refresh`, `cmd/cfg/set`
+- `cmd/ping`, `cmd/restart`, `cmd/refresh`, `cmd/cfg/set`, `cmd/cfg/logging/set`, `cmd/cfg/telemetry/set`
 - `cmd/components/install`, `cmd/components/uninstall`, `cmd/components/enable`, `cmd/components/disable`, `cmd/components/upgrade`
 - `cmd/core/upgrade`
-- Per-component: `components/<component_id>/cmd/reset`, `cmd/ping`, `cmd/cfg/set`
+- Per-component: `components/<component_id>/cmd/reset`, `cmd/ping`, `cmd/cfg/set`, `cmd/cfg/logging/set`, `cmd/cfg/telemetry/set`
 
 See [MQTT_CONTRACT_V1.md](../MQTT_CONTRACT_V1.md) in the repo root for full topic list and payload contracts.
 
@@ -58,7 +58,7 @@ See [MQTT_CONTRACT_V1.md](../MQTT_CONTRACT_V1.md) in the repo root for full topi
 | `AGENT_USERNAME` | Yes | Agent identity (topic prefix). |
 | `AGENT_PASSWORD` | Yes | MQTT password. |
 | `AGENT_HEARTBEAT` | No | Seconds between retained status refresh; default `0` (disabled). |
-| `LUCID_LOG_LEVEL` | No | Startup log level (DEBUG, INFO, WARNING, ERROR). Overridable via MQTT `cmd/cfg/set`. |
+| `LUCID_LOG_LEVEL` | No | Startup log level (DEBUG, INFO, WARNING, ERROR). Overridable via MQTT `cmd/cfg/logging/set`. |
 | `LUCID_AGENT_CORE_WHEEL` | No | Path to local wheel for install/upgrade (skips download). |
 | `LUCID_AGENT_BASE_DIR` | No | Override base dir for agent files (default `/home/lucid/lucid-agent-core`). For testing. |
 

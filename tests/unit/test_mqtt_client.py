@@ -113,13 +113,15 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
     fake_paho_client.subscribe.assert_any_call(topics.cmd_restart(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_refresh(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_cfg_set(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_cfg_logging_set(), qos=1)
+    fake_paho_client.subscribe.assert_any_call(topics.cmd_cfg_telemetry_set(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_install(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_uninstall(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_enable(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_disable(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_components_upgrade(), qos=1)
     fake_paho_client.subscribe.assert_any_call(topics.cmd_core_upgrade(), qos=1)
-    assert fake_paho_client.subscribe.call_count == 10
+    assert fake_paho_client.subscribe.call_count == 12
 
     publish_calls = fake_paho_client.publish.call_args_list
     retained_publishes = [c for c in publish_calls if c[1].get("retain") is True]
