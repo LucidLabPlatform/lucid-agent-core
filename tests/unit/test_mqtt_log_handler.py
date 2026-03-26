@@ -50,9 +50,9 @@ def test_build_cfg_logging_reflects_stored_log_level():
     assert "logs_enabled" not in cfg
 
 
-def test_level_from_cfg_or_env_defaults_error(monkeypatch):
+def test_level_from_cfg_or_env_defaults_info(monkeypatch):
     monkeypatch.delenv("LUCID_LOG_LEVEL", raising=False)
-    assert level_from_cfg_or_env(None) == logging.ERROR
+    assert level_from_cfg_or_env(None) == logging.INFO
 
 
 def test_mqtt_log_handler_publishes():
