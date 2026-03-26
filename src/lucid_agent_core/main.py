@@ -22,10 +22,14 @@ from lucid_component_base import ComponentContext
 from lucid_agent_core.components.loader import load_components
 
 
+_CONNECT_TIMEOUT_S = 5.0
+_CONNECT_POLL_INTERVAL_S = 0.1
+
+
 def _configure_logging(cfg: dict | None = None) -> None:
     """
     Single log level for all scopes (core, base, components).
-    Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else DEBUG.
+    Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else INFO.
     """
     from lucid_agent_core.core.log_config import apply_log_level_from_config
 
@@ -132,12 +136,15 @@ def run_agent() -> int:
 
     # Wait for connection callback to complete before publishing populated state
     # This ensures the MQTT connection is fully established before we publish
-    for _ in range(50):  # Wait up to 5 seconds
+    for _ in range(int(_CONNECT_TIMEOUT_S / _CONNECT_POLL_INTERVAL_S)):
         if agent.is_connected():
             break
-        time.sleep(0.1)
+        time.sleep(_CONNECT_POLL_INTERVAL_S)
     else:
-        logger.warning("Connection not established after 5 seconds, proceeding anyway")
+        logger.warning(
+            "Connection not established after %.1f seconds, proceeding anyway",
+            _CONNECT_TIMEOUT_S,
+        )
 
     # Load components and register their cmd handlers + update state
     components, load_results = load_components(
