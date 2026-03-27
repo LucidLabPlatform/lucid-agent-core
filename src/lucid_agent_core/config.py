@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 
 class ConfigError(ValueError):

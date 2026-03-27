@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lucid_agent_core.core.config_store import ConfigStore
+from lucid_agent_core.core.config import ConfigStore
 
 
 def test_apply_set_general_only_updates_cfg_domain(tmp_path, monkeypatch):

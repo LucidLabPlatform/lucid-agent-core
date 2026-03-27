@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lucid_agent_core.mqtt_client import AgentMQTTClient
+from lucid_agent_core.mqtt import AgentMQTTClient
 from lucid_agent_core.mqtt_topics import TopicSchema
 from tests.unit.test_mqtt_client import _SuccessRC
 
@@ -33,7 +33,7 @@ def client(fake_paho_client, monkeypatch):
         def shutdown(self, *a, **k):
             pass
 
-    monkeypatch.setattr("lucid_agent_core.mqtt_client.ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr("lucid_agent_core.mqtt.client.ThreadPoolExecutor", FakeExecutor)
 
     return AgentMQTTClient(
         host="localhost",
@@ -69,7 +69,7 @@ def test_lwt_uses_minimal_schema(client, fake_paho_client):
 def test_status_connected_since_ts_stable_across_updates(client, fake_paho_client, tmp_path):
     """connected_since_ts must not change on reconnect or heartbeat."""
     from lucid_agent_core.core.cmd_context import CoreCommandContext
-    from lucid_agent_core.core.config_store import ConfigStore
+    from lucid_agent_core.core.config import ConfigStore
     
     config_store = ConfigStore(str(tmp_path / "test_cfg.json"))
     config_store.load()
@@ -109,7 +109,7 @@ def test_status_connected_since_ts_stable_across_updates(client, fake_paho_clien
 def test_status_uptime_increases(client, fake_paho_client, tmp_path):
     """uptime_s must increase on subsequent status publishes."""
     from lucid_agent_core.core.cmd_context import CoreCommandContext
-    from lucid_agent_core.core.config_store import ConfigStore
+    from lucid_agent_core.core.config import ConfigStore
     
     config_store = ConfigStore(str(tmp_path / "test_cfg2.json"))
     config_store.load()
