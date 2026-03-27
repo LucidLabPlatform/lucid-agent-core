@@ -56,7 +56,7 @@ def test_run_agent_returns_1_on_mqtt_connect_failure(monkeypatch, tmp_path):
     monkeypatch.setattr("lucid_agent_core.config.load_config", lambda: fake_cfg)
 
     # Mock the default config path for ConfigStore
-    import lucid_agent_core.core.config_store as cs
+    import lucid_agent_core.core.config as cs
     original_init = cs.ConfigStore.__init__
     def mock_init(self, path=None):
         original_init(self, str(tmp_path / "test_config.json"))
@@ -66,7 +66,7 @@ def test_run_agent_returns_1_on_mqtt_connect_failure(monkeypatch, tmp_path):
     fake_agent = MagicMock()
     fake_agent.connect.return_value = False
 
-    monkeypatch.setattr("lucid_agent_core.mqtt_client.AgentMQTTClient", lambda *a, **k: fake_agent)
+    monkeypatch.setattr("lucid_agent_core.mqtt.AgentMQTTClient", lambda *a, **k: fake_agent)
 
     code = m.run_agent()
     assert code == 1
@@ -97,7 +97,7 @@ def test_run_agent_shutdown_stops_components_before_mqtt_disconnect(monkeypatch,
     monkeypatch.setattr("lucid_agent_core.config.load_config", lambda: fake_cfg)
 
     # Mock the default config path for ConfigStore
-    import lucid_agent_core.core.config_store as cs
+    import lucid_agent_core.core.config as cs
     original_init = cs.ConfigStore.__init__
     def mock_init(self, path=None):
         original_init(self, str(tmp_path / "test_config2.json"))
@@ -106,7 +106,7 @@ def test_run_agent_shutdown_stops_components_before_mqtt_disconnect(monkeypatch,
     # fake agent
     fake_agent = MagicMock()
     fake_agent.connect.return_value = True
-    monkeypatch.setattr("lucid_agent_core.mqtt_client.AgentMQTTClient", lambda *a, **k: fake_agent)
+    monkeypatch.setattr("lucid_agent_core.mqtt.AgentMQTTClient", lambda *a, **k: fake_agent)
 
     # fake components - loader returns (components, load_results)
     stop_calls = []

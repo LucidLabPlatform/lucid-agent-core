@@ -1,48 +1,44 @@
 """
 Component installer — handles MQTT install commands.
 
-Downloads wheels from GitHub releases, verifies SHA256, runs pip install,
-updates the registry, and optionally triggers agent restart.
+Validates payload, fetches the release asset from GitHub, downloads the wheel,
+verifies SHA256, runs pip install, discovers the entrypoint, and updates the registry.
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import logging
-import re
-import subprocess
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
-from urllib.request import Request, urlopen
+from typing import Literal, Optional
+
+from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
+from lucid_agent_core.core.upgrade._github_release import build_wheel_url, fetch_release_asset
+from lucid_agent_core.core.upgrade._download import DOWNLOAD_TIMEOUT_S, MAX_WHEEL_BYTES, download_wheel, verify_sha256
+from lucid_agent_core.core.upgrade._pip import pip_install_wheel
+from lucid_agent_core.core.upgrade._validation import (
+    ValidationError,
+    _GH_NAME_RE,
+    _COMPONENT_ID_RE,
+    _SEMVER_RE,
+    _SHA256_RE,
+    extract_component_id_best_effort,
+    extract_request_id_best_effort,
+    extract_version_best_effort,
+    utc_now,
+)
 
 try:
     from importlib.metadata import version as _pkg_version
 
     _AGENT_VERSION = _pkg_version("lucid-agent-core")
-except Exception:  # PackageNotFoundError or missing metadata
+except Exception:
     _AGENT_VERSION = "0.0.0"
 
-from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
-from lucid_agent_core.paths import get_paths
-
 logger = logging.getLogger(__name__)
-
-_COMPONENT_ID_RE = re.compile(r"^[a-z0-9_]+$")
-_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
-_SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
-_GH_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-
-MAX_WHEEL_BYTES = 200 * 1024 * 1024  # 200MB safety cap
-DOWNLOAD_TIMEOUT_S = 30
-
-
-class ValidationError(ValueError):
-    """Raised when install payload validation fails."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,37 +99,51 @@ def handle_install_component(raw_payload: str) -> InstallResult:
     verifies integrity, installs, discovers entrypoint, updates registry, and
     returns a structured result.
     """
-    ts = _utc_now()
+    ts = utc_now()
 
     try:
         req = _parse_and_validate(raw_payload)
     except ValidationError as exc:
-        # No request_id guaranteed. Return best-effort.
+        logger.warning(
+            "Install validation failed component=%s: %s",
+            extract_component_id_best_effort(raw_payload) or "?",
+            exc,
+        )
         return InstallResult(
-            request_id=_extract_request_id_best_effort(raw_payload),
-            component_id=_extract_component_id_best_effort(raw_payload),
-            version=_extract_version_best_effort(raw_payload),
+            request_id=extract_request_id_best_effort(raw_payload),
+            component_id=extract_component_id_best_effort(raw_payload),
+            version=extract_version_best_effort(raw_payload),
             ok=False,
             ts=ts,
             error=f"validation_error: {exc}",
             restart_required=False,
         )
 
+    logger.info(
+        "Install started: component=%s version=%s request_id=%s",
+        req.component_id,
+        req.source.version,
+        req.request_id,
+    )
     tag = f"v{req.source.version}"
     wheel_url: Optional[str] = None
 
     try:
         registry = load_registry()
         existing = registry.get(req.component_id)
-
-        # Idempotency: if same repo + version already installed, do nothing.
         existing_entrypoint = existing.get("entrypoint", "") if isinstance(existing, dict) else ""
+
         if is_same_install(
             existing,
             f"{req.source.owner}/{req.source.repo}",
             req.source.version,
             existing_entrypoint,
         ):
+            logger.info(
+                "Install skipped (already installed): component=%s version=%s",
+                req.component_id,
+                req.source.version,
+            )
             return InstallResult(
                 request_id=req.request_id,
                 component_id=req.component_id,
@@ -145,19 +155,38 @@ def handle_install_component(raw_payload: str) -> InstallResult:
                 restart_required=False,
             )
 
-        # Fetch asset filename from GitHub releases API
-        asset = _fetch_release_asset(req.source.owner, req.source.repo, tag)
-        wheel_url = f"https://github.com/{req.source.owner}/{req.source.repo}/releases/download/{tag}/{asset}"
+        logger.debug(
+            "Fetching release asset from GitHub: %s/%s tag=%s",
+            req.source.owner,
+            req.source.repo,
+            tag,
+        )
+        asset = fetch_release_asset(req.source.owner, req.source.repo, tag)
+        logger.debug("GitHub asset resolved: %s", asset)
+        wheel_url = build_wheel_url(req.source.owner, req.source.repo, tag, asset)
 
         with tempfile.TemporaryDirectory() as tmp:
             wheel_path = Path(tmp) / asset
-            _download_with_limits(
-                wheel_url, wheel_path, timeout_s=DOWNLOAD_TIMEOUT_S, max_bytes=MAX_WHEEL_BYTES
+            logger.info("Downloading wheel: %s", wheel_url)
+            download_wheel(
+                wheel_url,
+                wheel_path,
+                timeout_s=DOWNLOAD_TIMEOUT_S,
+                max_bytes=MAX_WHEEL_BYTES,
+                user_agent=f"lucid-agent-core/{_AGENT_VERSION}",
             )
-            _verify_sha256(wheel_path, expected=req.source.sha256)
-            pip_out, pip_err = _pip_install(wheel_path, component_id=req.component_id)
+            _size = wheel_path.stat().st_size if wheel_path.exists() else -1
+            logger.debug("Wheel downloaded: %d bytes → %s", _size, wheel_path.name)
+            logger.debug("Verifying SHA256: expected=%s…", req.source.sha256[:16])
+            verify_sha256(wheel_path, expected=req.source.sha256)
+            logger.debug("SHA256 verified OK")
+            logger.info("Running pip install: component=%s wheel=%s", req.component_id, asset)
+            pip_out, pip_err = pip_install_wheel(wheel_path, component_id=req.component_id)
+            logger.debug("pip install stdout: %s", (pip_out or "(empty)")[:500])
+            logger.debug("pip install stderr: %s", (pip_err or "(empty)")[:500])
 
         entrypoint = _discover_entrypoint(req.component_id)
+        logger.debug("Entrypoint discovered: %s", entrypoint)
         _verify_entrypoint(entrypoint)
 
         dist_name = _extract_dist_name_from_wheel(asset)
@@ -180,6 +209,17 @@ def handle_install_component(raw_payload: str) -> InstallResult:
             "installed_at": ts,
         }
         write_registry(registry)
+        logger.info(
+            "Registry updated: component=%s version=%s entrypoint=%s",
+            req.component_id,
+            req.source.version,
+            entrypoint,
+        )
+        logger.info(
+            "Install complete: component=%s version=%s restart_required=True",
+            req.component_id,
+            req.source.version,
+        )
 
         return InstallResult(
             request_id=req.request_id,
@@ -235,7 +275,6 @@ def _parse_and_validate(raw_payload: str) -> InstallRequest:
         version=source_obj.get("version"),
         sha256=source_obj.get("sha256"),
     )
-
     req = InstallRequest(
         request_id=payload["request_id"],
         component_id=payload["component_id"],
@@ -243,30 +282,6 @@ def _parse_and_validate(raw_payload: str) -> InstallRequest:
     )
     req.validate()
     return req
-
-
-def _fetch_release_asset(owner: str, repo: str, tag: str) -> str:
-    """Fetch .whl asset filename from GitHub releases API for the given tag."""
-    url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
-    api_req = Request(
-        url,
-        headers={
-            "User-Agent": f"lucid-agent-core/{_AGENT_VERSION}",
-            "Accept": "application/vnd.github+json",
-        },
-    )
-    try:
-        with urlopen(api_req, timeout=DOWNLOAD_TIMEOUT_S) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise ValidationError(f"failed to fetch release {tag} from {owner}/{repo}: {exc}") from exc
-
-    for asset in data.get("assets", []):
-        name = asset.get("name", "")
-        if name.endswith(".whl"):
-            return name
-
-    raise ValidationError(f"no .whl asset found in release {tag} of {owner}/{repo}")
 
 
 def _discover_entrypoint(component_id: str) -> str:
@@ -282,115 +297,10 @@ def _discover_entrypoint(component_id: str) -> str:
     )
 
 
-def _download_with_limits(url: str, out_path: Path, *, timeout_s: int, max_bytes: int) -> None:
-    req = Request(url, headers={"User-Agent": f"lucid-agent-core/{_AGENT_VERSION}"})
-    read = 0
-    with urlopen(req, timeout=timeout_s) as resp, out_path.open("wb") as f:
-        while True:
-            chunk = resp.read(1024 * 1024)
-            if not chunk:
-                break
-            read += len(chunk)
-            if read > max_bytes:
-                raise RuntimeError(f"download exceeded max_bytes={max_bytes}")
-            f.write(chunk)
-
-
-def _verify_sha256(path: Path, *, expected: str) -> None:
-    expected_l = expected.lower()
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    got = h.hexdigest().lower()
-    if got != expected_l:
-        raise RuntimeError(f"sha256 mismatch: got={got}")
-
-
-def _pip_install(wheel_path: Path, *, component_id: str) -> tuple[Optional[str], Optional[str]]:
-    paths = get_paths()
-    pip_path = paths.pip_path
-
-    if not pip_path.exists():
-        raise FileNotFoundError(f"pip executable not found: {pip_path}")
-
-    completed = subprocess.run(
-        [str(pip_path), "install", "--upgrade", str(wheel_path)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"pip install failed rc={completed.returncode}\n"
-            f"stdout:\n{(completed.stdout or '').strip()}\n"
-            f"stderr:\n{(completed.stderr or '').strip()}"
-        )
-
-    out_lines = [completed.stdout or ""]
-    err_lines = [completed.stderr or ""]
-
-    # Install [pi] extra for led_strip so the helper has rpi_ws281x in the same venv.
-    if component_id == "led_strip":
-        extra_completed = subprocess.run(
-            [str(pip_path), "install", "lucid-component-led-strip[pi]"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if extra_completed.returncode != 0:
-            logger.warning(
-                "pip install lucid-component-led-strip[pi] failed (helper may lack rpi_ws281x): %s",
-                (extra_completed.stderr or extra_completed.stdout or "").strip(),
-            )
-        else:
-            out_lines.append(extra_completed.stdout or "")
-            err_lines.append(extra_completed.stderr or "")
-
-    return "\n".join(out_lines).strip() or None, "\n".join(err_lines).strip() or None
-
-
 def _verify_entrypoint(entrypoint: str) -> None:
     module_name, class_name = entrypoint.split(":", 1)
     module = importlib.import_module(module_name)
     getattr(module, class_name)
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _extract_request_id_best_effort(raw_payload: str) -> str:
-    try:
-        obj = json.loads(raw_payload)
-        if isinstance(obj, dict) and isinstance(obj.get("request_id"), str):
-            return obj["request_id"]
-    except Exception:
-        pass
-    return ""
-
-
-def _extract_component_id_best_effort(raw_payload: str) -> str:
-    try:
-        obj = json.loads(raw_payload)
-        if isinstance(obj, dict) and isinstance(obj.get("component_id"), str):
-            return obj["component_id"]
-    except Exception:
-        pass
-    return ""
-
-
-def _extract_version_best_effort(raw_payload: str) -> str:
-    try:
-        obj = json.loads(raw_payload)
-        if isinstance(obj, dict):
-            source = obj.get("source", {})
-            if isinstance(source, dict) and isinstance(source.get("version"), str):
-                return source["version"]
-    except Exception:
-        pass
-    return ""
 
 
 def _extract_dist_name_from_wheel(wheel_filename: str) -> str:

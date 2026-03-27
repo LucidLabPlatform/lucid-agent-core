@@ -286,7 +286,7 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     print("=" * 60)
     print(f"Base directory: {BASE_DIR}")
     print(f"Configuration: {ENV_PATH}")
-    print(f"\nNext steps:")
+    print("\nNext steps:")
     print(f"1. Edit {ENV_PATH} with your MQTT credentials")
     print(f"2. Start the service: sudo systemctl start {SERVICE_NAME}")
     print(f"3. Check status: sudo systemctl status {SERVICE_NAME}")

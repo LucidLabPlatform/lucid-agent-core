@@ -34,7 +34,7 @@ def mock_ctx(tmp_path):
     topics = TopicSchema("test")
     config_store = MagicMock()
     config_store.get_cached.return_value = {}
-    
+
     return CoreCommandContext(
         mqtt=mqtt,
         topics=topics,
@@ -49,7 +49,7 @@ def mock_registry(tmp_path):
     """Setup mock registry file."""
     registry_path = tmp_path / "components_registry.json"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     registry = {
         "fixture_cpu": {
             "component_id": "fixture_cpu",
@@ -59,18 +59,18 @@ def mock_registry(tmp_path):
         }
     }
     registry_path.write_text(json.dumps(registry))
-    
+
     return registry_path
 
 
 def test_enable_command_updates_registry_and_state(mock_ctx, mock_registry, monkeypatch):
     """Test enable command sets enabled=true and republishes state."""
     monkeypatch.setenv("LUCID_AGENT_BASE_DIR", str(mock_registry.parent.parent))
-    
+
     payload = json.dumps({"request_id": "req123", "component_id": "fixture_cpu"})
-    
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
-        with patch("lucid_agent_core.core.handlers.write_registry") as mock_write:
+
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
+        with patch("lucid_agent_core.core.handlers.component_handlers.write_registry") as mock_write:
             mock_load.return_value = {
                 "fixture_cpu": {
                     "component_id": "fixture_cpu",
@@ -78,21 +78,21 @@ def test_enable_command_updates_registry_and_state(mock_ctx, mock_registry, monk
                     "enabled": False,
                 }
             }
-            
+
             on_components_enable(mock_ctx, payload)
-            
+
             # Verify enabled set to True
             assert mock_write.called
             written_registry = mock_write.call_args[0][0]
             assert written_registry["fixture_cpu"]["enabled"] is True
-            
+
             # Verify state was published
             state_publishes = [
                 call for call in mock_ctx.mqtt.publish.call_args_list
                 if "state" in str(call[0][0])
             ]
             assert len(state_publishes) > 0
-            
+
             # Verify result published
             result_publishes = [
                 call for call in mock_ctx.mqtt.publish.call_args_list
@@ -104,11 +104,11 @@ def test_enable_command_updates_registry_and_state(mock_ctx, mock_registry, monk
 def test_disable_command_updates_registry_and_state(mock_ctx, mock_registry, monkeypatch):
     """Test disable command sets enabled=false and republishes state."""
     monkeypatch.setenv("LUCID_AGENT_BASE_DIR", str(mock_registry.parent.parent))
-    
+
     payload = json.dumps({"request_id": "req123", "component_id": "fixture_cpu"})
-    
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
-        with patch("lucid_agent_core.core.handlers.write_registry") as mock_write:
+
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
+        with patch("lucid_agent_core.core.handlers.component_handlers.write_registry") as mock_write:
             mock_load.return_value = {
                 "fixture_cpu": {
                     "component_id": "fixture_cpu",
@@ -116,14 +116,14 @@ def test_disable_command_updates_registry_and_state(mock_ctx, mock_registry, mon
                     "enabled": True,
                 }
             }
-            
+
             on_components_disable(mock_ctx, payload)
-            
+
             # Verify enabled set to False
             assert mock_write.called
             written_registry = mock_write.call_args[0][0]
             assert written_registry["fixture_cpu"]["enabled"] is False
-            
+
             # Verify state was published
             state_publishes = [
                 call for call in mock_ctx.mqtt.publish.call_args_list
@@ -135,12 +135,12 @@ def test_disable_command_updates_registry_and_state(mock_ctx, mock_registry, mon
 def test_enable_missing_component_id_returns_error(mock_ctx):
     """Test enable without component_id returns error."""
     payload = json.dumps({"request_id": "req123"})
-    
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
         mock_load.return_value = {}
-        
+
         on_components_enable(mock_ctx, payload)
-        
+
         # Verify error result published
         result_payload = mock_ctx.mqtt.publish.call_args[0][1]
         result = json.loads(result_payload)
@@ -151,12 +151,12 @@ def test_enable_missing_component_id_returns_error(mock_ctx):
 def test_disable_missing_component_id_returns_error(mock_ctx):
     """Test disable without component_id returns error."""
     payload = json.dumps({"request_id": "req123"})
-    
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
         mock_load.return_value = {}
-        
+
         on_components_disable(mock_ctx, payload)
-        
+
         # Verify error result published
         result_payload = mock_ctx.mqtt.publish.call_args[0][1]
         result = json.loads(result_payload)
@@ -168,7 +168,7 @@ def test_enable_nonexistent_component_returns_error(mock_ctx):
     """Test enable for non-existent component returns error."""
     payload = json.dumps({"request_id": "req123", "component_id": "nonexistent"})
 
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
         mock_load.return_value = {}
 
         on_components_enable(mock_ctx, payload)
@@ -184,11 +184,11 @@ def test_duplicate_request_id_rejected_with_error(mock_ctx):
     """Second call with same request_id returns ok=false, error='duplicate request_id'."""
     payload = json.dumps({"request_id": "dup-001", "component_id": "fixture_cpu"})
 
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
         mock_load.return_value = {
             "fixture_cpu": {"component_id": "fixture_cpu", "version": "1.0.0", "enabled": True}
         }
-        with patch("lucid_agent_core.core.handlers.write_registry"):
+        with patch("lucid_agent_core.core.handlers.component_handlers.write_registry"):
             # First call — should succeed
             on_components_enable(mock_ctx, payload)
             first_calls = mock_ctx.mqtt.publish.call_count
@@ -206,11 +206,11 @@ def test_duplicate_request_id_rejected_with_error(mock_ctx):
 
 def test_different_request_ids_both_processed(mock_ctx):
     """Two calls with different request_ids are both processed."""
-    with patch("lucid_agent_core.core.handlers.load_registry") as mock_load:
+    with patch("lucid_agent_core.core.handlers.component_handlers.load_registry") as mock_load:
         mock_load.return_value = {
             "fixture_cpu": {"component_id": "fixture_cpu", "version": "1.0.0", "enabled": False}
         }
-        with patch("lucid_agent_core.core.handlers.write_registry"):
+        with patch("lucid_agent_core.core.handlers.component_handlers.write_registry"):
             on_components_enable(mock_ctx, json.dumps({"request_id": "id-a", "component_id": "fixture_cpu"}))
             on_components_enable(mock_ctx, json.dumps({"request_id": "id-b", "component_id": "fixture_cpu"}))
 
