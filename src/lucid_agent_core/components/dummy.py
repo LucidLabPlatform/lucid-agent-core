@@ -7,7 +7,6 @@ Entrypoint: lucid_agent_core.components.dummy:DummyComponent
 from __future__ import annotations
 
 from lucid_component_base import Component
-from lucid_component_base.context import ComponentContext
 
 
 class DummyComponent(Component):
