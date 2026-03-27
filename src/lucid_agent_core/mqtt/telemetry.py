@@ -93,18 +93,40 @@ class TelemetryLoop:
             return True
 
         last_value, last_ts = last
-        if now - last_ts >= interval_s:
+        elapsed = now - last_ts
+        if elapsed >= interval_s:
             return True
 
+        remaining = interval_s - elapsed
         try:
             if isinstance(last_value, (int, float)) and isinstance(value, (int, float)):
                 if last_value == 0:
-                    return value != 0
+                    if value == 0:
+                        logger.debug(
+                            "Telemetry skip %s: interval not elapsed (%.1fs remaining)",
+                            metric,
+                            remaining,
+                        )
+                        return False
+                    return True
                 delta_pct = abs(value - last_value) / abs(last_value) * 100.0
-                return delta_pct >= threshold
+                if delta_pct >= threshold:
+                    return True
+                logger.debug(
+                    "Telemetry skip %s: change %.2f%% below threshold %.2f%%",
+                    metric,
+                    delta_pct,
+                    threshold,
+                )
+                return False
         except TypeError:
             pass
-        return value != last_value
+        if value != last_value:
+            return True
+        logger.debug(
+            "Telemetry skip %s: interval not elapsed (%.1fs remaining)", metric, remaining
+        )
+        return False
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():

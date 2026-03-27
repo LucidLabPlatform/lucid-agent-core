@@ -29,13 +29,13 @@ def _configure_logging(cfg: dict | None = None) -> None:
     Single log level for all scopes (core, base, components).
     Uses cfg["log_level"] if provided, else LUCID_LOG_LEVEL env, else INFO.
     """
-    from lucid_agent_core.core.log_config import apply_log_level_from_config
+    from lucid_agent_core.core.log_config import apply_log_level
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    apply_log_level_from_config(cfg)
+    apply_log_level(cfg)
 
 
 _configure_logging()
@@ -68,11 +68,11 @@ def _install_signal_handlers(rt: Runtime) -> None:
 def _load_runtime_config(app_cfg: object) -> tuple[object, dict]:
     """Load and cache the runtime config store; apply log level. Returns (store, runtime_cfg)."""
     from lucid_agent_core.core.config import ConfigStore
-    from lucid_agent_core.core.log_config import apply_log_level_from_config
+    from lucid_agent_core.core.log_config import apply_log_level
 
     store = ConfigStore()
     runtime_cfg = store.load()
-    apply_log_level_from_config(runtime_cfg)
+    apply_log_level(runtime_cfg)
     logger.info("Runtime config loaded: %s", runtime_cfg)
     return store, runtime_cfg
 

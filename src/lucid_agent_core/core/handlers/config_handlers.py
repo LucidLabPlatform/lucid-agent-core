@@ -7,7 +7,7 @@ import logging
 from lucid_agent_core.core.cmd_context import CoreCommandContext
 from lucid_agent_core.core.handlers._dedup import check_duplicate
 from lucid_agent_core.core.handlers._parsing import parse_payload
-from lucid_agent_core.core.log_config import apply_log_level_from_config
+from lucid_agent_core.core.log_config import apply_log_level
 from lucid_agent_core.core.snapshots import build_cfg, build_cfg_logging, build_cfg_telemetry
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def on_cfg_logging_set(ctx: CoreCommandContext, payload_str: str) -> None:
     result["request_id"] = rid
 
     if result.get("ok"):
-        apply_log_level_from_config(new_cfg)
+        apply_log_level(new_cfg)
         ctx.publish(ctx.topics.cfg_logging(), build_cfg_logging(new_cfg), retain=True, qos=1)
 
     ctx.publish(ctx.topics.evt_result("cfg/logging/set"), result, retain=False, qos=1)

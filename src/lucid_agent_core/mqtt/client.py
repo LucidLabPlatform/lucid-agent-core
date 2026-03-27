@@ -415,6 +415,7 @@ class AgentMQTTClient:
         self._telemetry.stop()
 
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
+        logger.debug("Message received: topic=%s payload_len=%d", msg.topic, len(msg.payload))
         handler = self._handlers.get(msg.topic)
         if not handler:
             logger.warning("Unhandled topic: %s", msg.topic)

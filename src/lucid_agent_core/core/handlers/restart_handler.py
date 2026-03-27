@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 def on_restart(ctx: CoreCommandContext, payload_str: str) -> None:
     """Handle cmd/restart → evt/restart/result; then request process restart."""
     rid = request_id(payload_str)
+    logger.info("cmd/restart received request_id=%s", rid)
     if check_duplicate(ctx, rid, ctx.topics.evt_result("restart")):
         return
     ok = request_systemd_restart(reason="cmd/restart")

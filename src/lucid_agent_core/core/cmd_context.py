@@ -73,7 +73,9 @@ class CoreCommandContext:
         except (TypeError, ValueError) as exc:
             logger.error("Failed to JSON-encode payload for %s: %s", topic, exc)
             raise
-        return self.mqtt.publish(topic, payload_str, qos=qos, retain=retain)
+        result = self.mqtt.publish(topic, payload_str, qos=qos, retain=retain)
+        logger.debug("Published to %s (retain=%s qos=%d)", topic, retain, qos)
+        return result
 
     def publish_result(
         self,
@@ -87,6 +89,7 @@ class CoreCommandContext:
         payload = {"request_id": request_id, "ok": ok, "error": error}
         try:
             self.publish(topic, payload, retain=False, qos=1)
+            logger.debug("Result published: action=%s request_id=%s ok=%s", action, request_id, ok)
         except Exception as exc:
             logger.exception("Failed to publish result to %s: %s", topic, exc)
 
@@ -100,5 +103,6 @@ class CoreCommandContext:
         payload = {"request_id": request_id, "ok": False, "error": error}
         try:
             self.publish(topic, payload, retain=False, qos=1)
+            logger.debug("Error result published: topic=%s request_id=%s error=%s", topic, request_id, error)
         except Exception as exc:
             logger.exception("Failed to publish error result to %s: %s", topic, exc)

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(python3.11 -m ruff check src/lucid_agent_core/ --fix 2>&1)"
+    ]
+  }
+}

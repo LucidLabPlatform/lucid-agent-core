@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 def on_ping(ctx: CoreCommandContext, payload_str: str) -> None:
     """Handle cmd/ping → evt/ping/result."""
     rid = request_id(payload_str)
+    logger.debug("cmd/ping received request_id=%s", rid)
     if check_duplicate(ctx, rid, ctx.topics.evt_result("ping")):
         return
     ctx.publish_result("ping", rid, ok=True, error=None)

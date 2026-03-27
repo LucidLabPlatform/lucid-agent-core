@@ -7,6 +7,7 @@ Path: {base_dir}/data/components_registry.json. Atomic writes with fsync.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import time
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from lucid_agent_core.paths import get_paths
+
+logger = logging.getLogger(__name__)
 
 
 class RegistryError(RuntimeError):
@@ -41,6 +44,7 @@ def _validate_registry_shape(data: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for k, v in data.items():
         if not isinstance(k, str) or not isinstance(v, dict):
+            logger.warning("Registry entry dropped (invalid type): key=%r type(v)=%s", k, type(v).__name__)
             continue
         # Minimal sanity: keep only dict entries. Full schema validation can grow later.
         out[k] = v
@@ -50,14 +54,18 @@ def _validate_registry_shape(data: Any) -> dict[str, dict[str, Any]]:
 def load_registry() -> dict[str, dict[str, Any]]:
     paths = get_paths()
     registry_path = paths.registry_path
+    logger.debug("Loading registry from %s", registry_path)
 
     if not registry_path.exists():
+        logger.debug("Registry file not found at %s, returning empty", registry_path)
         return {}
 
     try:
         with registry_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        return _validate_registry_shape(data)
+        result = _validate_registry_shape(data)
+        logger.info("Registry loaded: %d component(s)", len(result))
+        return result
     except json.JSONDecodeError:
         # Preserve corrupted file for debugging instead of silently hiding it.
         corrupt = registry_path.with_suffix(f".corrupt.{_now_ts()}.json")
@@ -66,6 +74,7 @@ def load_registry() -> dict[str, dict[str, Any]]:
         except Exception:
             # If we can't move it, we still fail soft and return empty.
             pass
+        logger.warning("Registry JSON corrupt, moved to %s — returning empty registry", corrupt)
         return {}
     except OSError as exc:
         raise RegistryError(f"failed to read registry: {exc}") from exc
@@ -92,6 +101,7 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
         fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
 
         cleaned = _validate_registry_shape(data)
+        logger.debug("Writing registry: %d component(s) to %s", len(cleaned), registry_path)
 
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -106,6 +116,7 @@ def write_registry(data: dict[str, dict[str, Any]]) -> None:
 
         os.replace(tmp_path, registry_path)
         _fsync_dir(registry_path.parent)
+        logger.debug("Registry write complete (atomic rename + fsync)")
 
         fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 

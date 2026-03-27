@@ -50,6 +50,7 @@ def subscribe_component_topics(
         paho_client.subscribe(topic, qos=1)
         topics_for_cid.add(topic)
         logger.info("Subscribed: %s", topic)
+        logger.debug("Registered handler: topic=%s handler=%s", topic, method.__name__)
 
     for cfg_action, attr_name in (
         ("cfg/set", "on_cmd_cfg_set"),
