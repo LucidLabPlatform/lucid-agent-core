@@ -31,16 +31,12 @@ def level_from_cfg_or_env(cfg: dict[str, Any] | None) -> int:
     return _parse_level(raw) if raw else logging.INFO
 
 
-def apply_log_level(level: int) -> None:
-    """Set root logger level so all loggers (core, base, components) use this level."""
-    root = logging.getLogger()
-    root.setLevel(level)
-
-
-def apply_log_level_from_config(cfg: dict[str, Any] | None) -> None:
+def apply_log_level(cfg: dict[str, Any] | None) -> logging.Logger:
     """
     Resolve level from config (or env) and apply to root logger.
     Call at startup and after logging cfg is updated via cmd/cfg/logging/set.
     """
     level = level_from_cfg_or_env(cfg)
-    apply_log_level(level)
+    root = logging.getLogger()
+    root.setLevel(level)
+    return root
