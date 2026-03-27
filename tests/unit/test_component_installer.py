@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import lucid_agent_core.core.component_installer as ci
+import lucid_agent_core.core.upgrade.component_installer as ci
 
 
 def valid_payload(**overrides):
@@ -59,13 +59,13 @@ def test_idempotent_install_skips_work(monkeypatch):
     monkeypatch.setattr(ci, "is_same_install", lambda existing, repo, version, entrypoint: True)
 
     fetch = MagicMock()
-    monkeypatch.setattr(ci, "_fetch_release_asset", fetch)
+    monkeypatch.setattr(ci, "fetch_release_asset", fetch)
 
     download = MagicMock()
-    monkeypatch.setattr(ci, "_download_with_limits", download)
+    monkeypatch.setattr(ci, "download_wheel", download)
 
     pip = MagicMock()
-    monkeypatch.setattr(ci, "_pip_install", pip)
+    monkeypatch.setattr(ci, "pip_install_wheel", pip)
 
     write = MagicMock()
     monkeypatch.setattr(ci, "write_registry", write)
@@ -87,7 +87,7 @@ def test_github_api_failure_returns_error(monkeypatch):
 
     monkeypatch.setattr(
         ci,
-        "_fetch_release_asset",
+        "fetch_release_asset",
         lambda owner, repo, tag: (_ for _ in ()).throw(ci.ValidationError("failed to fetch release")),
     )
 
@@ -100,20 +100,21 @@ def test_github_api_failure_returns_error(monkeypatch):
 def test_sha_mismatch_fails_before_pip(monkeypatch, tmp_path):
     monkeypatch.setattr(ci, "load_registry", lambda: {})
     monkeypatch.setattr(ci, "is_same_install", lambda *a: False)
-    monkeypatch.setattr(ci, "_fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "build_wheel_url", lambda *a: "https://example.com/lucid_agent_cpu-1.2.3-py3-none-any.whl")
 
-    def fake_download(url, out_path: Path, *, timeout_s: int, max_bytes: int):
+    def fake_download(url, out_path: Path, *, timeout_s: int, max_bytes: int, user_agent: str = ""):
         out_path.write_bytes(b"wheel-bytes")
 
-    monkeypatch.setattr(ci, "_download_with_limits", fake_download)
+    monkeypatch.setattr(ci, "download_wheel", fake_download)
 
     def fake_verify_sha(path: Path, *, expected: str):
         raise RuntimeError("sha256 mismatch: expected=... got=...")
 
-    monkeypatch.setattr(ci, "_verify_sha256", fake_verify_sha)
+    monkeypatch.setattr(ci, "verify_sha256", fake_verify_sha)
 
     pip = MagicMock()
-    monkeypatch.setattr(ci, "_pip_install", pip)
+    monkeypatch.setattr(ci, "pip_install_wheel", pip)
 
     monkeypatch.setattr(ci, "write_registry", MagicMock())
 
@@ -127,9 +128,10 @@ def test_sha_mismatch_fails_before_pip(monkeypatch, tmp_path):
 def test_pip_failure_returns_error_and_no_registry_write(monkeypatch):
     monkeypatch.setattr(ci, "load_registry", lambda: {})
     monkeypatch.setattr(ci, "is_same_install", lambda *a: False)
-    monkeypatch.setattr(ci, "_fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
-    monkeypatch.setattr(ci, "_download_with_limits", lambda *a, **k: None)
-    monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "build_wheel_url", lambda *a: "https://example.com/lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "download_wheel", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "verify_sha256", lambda *a, **k: None)
 
     write = MagicMock()
     monkeypatch.setattr(ci, "write_registry", write)
@@ -137,7 +139,7 @@ def test_pip_failure_returns_error_and_no_registry_write(monkeypatch):
     def fake_pip_install(path: Path, *, component_id: str = ""):
         raise RuntimeError("pip install failed rc=1\nstdout:\n...\nstderr:\nboom")
 
-    monkeypatch.setattr(ci, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(ci, "pip_install_wheel", fake_pip_install)
 
     discover = MagicMock()
     monkeypatch.setattr(ci, "_discover_entrypoint", discover)
@@ -155,10 +157,11 @@ def test_pip_failure_returns_error_and_no_registry_write(monkeypatch):
 def test_missing_entrypoint_returns_error(monkeypatch):
     monkeypatch.setattr(ci, "load_registry", lambda: {})
     monkeypatch.setattr(ci, "is_same_install", lambda *a: False)
-    monkeypatch.setattr(ci, "_fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
-    monkeypatch.setattr(ci, "_download_with_limits", lambda *a, **k: None)
-    monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
-    monkeypatch.setattr(ci, "_pip_install", lambda *a, **k: ("ok", ""))
+    monkeypatch.setattr(ci, "fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "build_wheel_url", lambda *a: "https://example.com/lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "download_wheel", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "verify_sha256", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "pip_install_wheel", lambda *a, **k: ("ok", ""))
 
     def fake_discover(component_id):
         raise ci.ValidationError("no entry point for component_id='cpu'")
@@ -175,10 +178,14 @@ def test_missing_entrypoint_returns_error(monkeypatch):
 def test_success_updates_registry_and_requests_restart(monkeypatch):
     monkeypatch.setattr(ci, "load_registry", lambda: {})
     monkeypatch.setattr(ci, "is_same_install", lambda *a: False)
-    monkeypatch.setattr(ci, "_fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
-    monkeypatch.setattr(ci, "_download_with_limits", lambda *a, **k: None)
-    monkeypatch.setattr(ci, "_verify_sha256", lambda *a, **k: None)
-    monkeypatch.setattr(ci, "_pip_install", lambda *a, **k: ("ok", ""))
+    monkeypatch.setattr(ci, "fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(
+        ci, "build_wheel_url",
+        lambda *a: "https://github.com/LucidLabPlatform/lucid-agent-cpu/releases/download/v1.2.3/lucid_agent_cpu-1.2.3-py3-none-any.whl",
+    )
+    monkeypatch.setattr(ci, "download_wheel", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "verify_sha256", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "pip_install_wheel", lambda *a, **k: ("ok", ""))
     monkeypatch.setattr(ci, "_discover_entrypoint", lambda cid: "some.module:CPU")
     monkeypatch.setattr(ci, "_verify_entrypoint", lambda *a: None)
 
@@ -209,9 +216,9 @@ def test_success_updates_registry_and_requests_restart(monkeypatch):
 
 def test_extract_version_best_effort_reads_from_source():
     raw = json.dumps({"source": {"version": "2.0.0"}})
-    assert ci._extract_version_best_effort(raw) == "2.0.0"
+    assert ci.extract_version_best_effort(raw) == "2.0.0"
 
 
 def test_extract_version_best_effort_missing_returns_empty():
-    assert ci._extract_version_best_effort("{}") == ""
-    assert ci._extract_version_best_effort("not json") == ""
+    assert ci.extract_version_best_effort("{}") == ""
+    assert ci.extract_version_best_effort("not json") == ""

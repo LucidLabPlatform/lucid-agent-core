@@ -3,7 +3,7 @@ from unittest.mock import ANY, MagicMock
 
 import pytest
 
-from lucid_agent_core.mqtt_client import AgentMQTTClient
+from lucid_agent_core.mqtt import AgentMQTTClient
 from lucid_agent_core.mqtt_topics import TopicSchema
 
 
@@ -53,7 +53,7 @@ def client(fake_paho_client, monkeypatch):
         def shutdown(self, *a, **k):
             pass
 
-    monkeypatch.setattr("lucid_agent_core.mqtt_client.ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr("lucid_agent_core.mqtt.client.ThreadPoolExecutor", FakeExecutor)
 
     c = AgentMQTTClient(
         host="localhost",
@@ -90,7 +90,7 @@ def test_connect_sets_lwt_and_starts_loop(client, fake_paho_client):
 
 def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, tmp_path):
     from lucid_agent_core.core.cmd_context import CoreCommandContext
-    from lucid_agent_core.core.config_store import ConfigStore
+    from lucid_agent_core.core.config import ConfigStore
 
     config_store = ConfigStore(str(tmp_path / "test_cfg.json"))
     config_store.load()
@@ -137,7 +137,7 @@ def test_on_connect_subscribes_and_publishes_retained(client, fake_paho_client, 
 
 def test_on_message_dispatches_known_topic(client, fake_paho_client, tmp_path):
     from lucid_agent_core.core.cmd_context import CoreCommandContext
-    from lucid_agent_core.core.config_store import ConfigStore
+    from lucid_agent_core.core.config import ConfigStore
 
     config_store = ConfigStore(str(tmp_path / "test_cfg2.json"))
     config_store.load()
