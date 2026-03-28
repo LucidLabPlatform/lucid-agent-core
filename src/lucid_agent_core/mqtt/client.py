@@ -66,11 +66,20 @@ class AgentMQTTClient:
         self._handlers: dict[str, Callable[[str], None]] = {}
         self._components: list[Any] = []
         self._components_lock = threading.Lock()
+        # Serialises concurrent start/stop operations so the read-check-act
+        # sequence in start_component/stop_component is atomic.
+        self._lifecycle_lock = threading.Lock()
         self._connected_since_ts: Optional[str] = None
         self._connected_ts: Optional[float] = None
 
         # Per-component cmd topics (for unsubscribe on stop)
         self._component_cmd_topics: dict[str, set[str]] = {}
+
+        # Rate-limit concurrent in-flight command handlers. Keeps the
+        # executor queue bounded so a flood of MQTT commands cannot exhaust
+        # memory or trigger unbounded installs/restarts on the Pi.
+        self._inflight_limit = max_workers * 8
+        self._inflight_sem = threading.Semaphore(self._inflight_limit)
 
         # Heartbeat
         self._heartbeat = HeartbeatLoop(
@@ -215,29 +224,35 @@ class AgentMQTTClient:
         """Stop a running component and unsubscribe its cmd topics."""
         from lucid_agent_core.mqtt.component_subscriptions import unsubscribe_component_topics
 
-        comp = self.get_component(component_id)
-        if comp is None:
-            return False
+        with self._lifecycle_lock:
+            comp = self.get_component(component_id)
+            if comp is None:
+                return False
 
-        try:
-            comp.stop()
-            logger.info("Stopped component: %s", component_id)
-            if hasattr(comp, "_publish_all_retained"):
-                try:
-                    comp._publish_all_retained()
-                    logger.info("Republished retained topics for stopped component: %s", component_id)
-                except Exception as exc:
-                    logger.warning("Failed to republish retained for %s: %s", component_id, exc)
-        except Exception as exc:
-            logger.exception("Failed to stop component %s: %s", component_id, exc)
-            return False
+            try:
+                comp.stop()
+                logger.info("Stopped component: %s", component_id)
+                if hasattr(comp, "_publish_all_retained"):
+                    try:
+                        comp._publish_all_retained()
+                        logger.info("Republished retained topics for stopped component: %s", component_id)
+                    except Exception as exc:
+                        logger.warning("Failed to republish retained for %s: %s", component_id, exc)
+            except Exception as exc:
+                logger.exception("Failed to stop component %s: %s", component_id, exc)
+                return False
 
-        topics_to_unsub = self._component_cmd_topics.pop(component_id, set())
-        unsubscribe_component_topics(self._client, self._handlers, topics_to_unsub)
-        return True
+            topics_to_unsub = self._component_cmd_topics.pop(component_id, set())
+            unsubscribe_component_topics(self._client, self._handlers, topics_to_unsub)
+            return True
 
     def start_component(self, component_id: str, registry: dict[str, dict]) -> bool:
         """Start a component by ID. Returns True if started, False otherwise."""
+        with self._lifecycle_lock:
+            return self._start_component_locked(component_id, registry)
+
+    def _start_component_locked(self, component_id: str, registry: dict[str, dict]) -> bool:
+        """Inner implementation — must be called with _lifecycle_lock held."""
         from lucid_agent_core.components.registry import load_registry as _load_registry
 
         reg = registry if registry else _load_registry()
@@ -425,7 +440,22 @@ class AgentMQTTClient:
         except UnicodeDecodeError as exc:
             logger.error("Payload decode failed topic=%s err=%s", msg.topic, exc)
             return
-        self._executor.submit(handler, payload_str)
+
+        if not self._inflight_sem.acquire(blocking=False):
+            logger.warning(
+                "Command rate limit reached (%d in-flight); dropping %s",
+                self._inflight_limit,
+                msg.topic,
+            )
+            return
+
+        def _run() -> None:
+            try:
+                handler(payload_str)
+            finally:
+                self._inflight_sem.release()
+
+        self._executor.submit(_run)
 
     # ------------------------------------------------------------------
     # Connection management

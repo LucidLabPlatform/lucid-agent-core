@@ -46,9 +46,9 @@ def client(fake_paho_client, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def submit(self, fn, arg):
-            submit_calls.append((fn, arg))
-            fn(arg)
+        def submit(self, fn, *args):
+            submit_calls.append((fn, *args))
+            fn(*args)
 
         def shutdown(self, *a, **k):
             pass
