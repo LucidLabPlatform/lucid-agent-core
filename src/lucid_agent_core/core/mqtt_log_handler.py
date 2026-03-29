@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 import traceback
@@ -89,6 +90,11 @@ class MQTTLogHandler(logging.Handler):
 
         return line
 
+    @property
+    def dropped_count(self) -> int:
+        """Total log lines dropped for any reason (rate limit, emit error, publish failure)."""
+        return self._dropped_count
+
     def _warn_rate_limit_drop(self, now: float) -> None:
         if now - self._last_warning_ts < 10.0:
             return
@@ -124,8 +130,17 @@ class MQTTLogHandler(logging.Handler):
                         self._batch_timer.start()
 
         except Exception:
-            # Silently ignore errors to prevent recursion
-            pass
+            # Track the drop so the metric stays accurate. Use stderr as a
+            # last-resort fallback — wrapping in another try/except so we
+            # never raise from a logging handler under any circumstances.
+            self._dropped_count += 1
+            try:
+                print(
+                    f"MQTTLogHandler.emit failed; dropped message from {record.name}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
 
     def _publish_batch_timer(self) -> None:
         """Called by timer to publish batch."""
@@ -174,16 +189,22 @@ class MQTTLogHandler(logging.Handler):
         }
 
         # Only publish if client is connected
-        if self.mqtt_client and hasattr(self.mqtt_client, "_client"):
-            client = self.mqtt_client._client
-            if client and client.is_connected():
+        if self.mqtt_client and self.mqtt_client.is_connected():
+            try:
+                self.mqtt_client.publish(
+                    self.topic,
+                    json.dumps(payload),
+                    qos=0,
+                    retain=False,
+                )
+            except Exception:
+                # Publish failed — count every line in the dropped batch so
+                # the metric reflects actual message loss, not just rate drops.
+                self._dropped_count += len(batch)
                 try:
-                    self.mqtt_client.publish(
-                        self.topic,
-                        json.dumps(payload),
-                        qos=0,
-                        retain=False,
+                    print(
+                        f"MQTTLogHandler: publish failed, dropped {len(batch)} lines",
+                        file=sys.stderr,
                     )
                 except Exception:
-                    # Don't log errors from the log handler itself to avoid recursion
                     pass

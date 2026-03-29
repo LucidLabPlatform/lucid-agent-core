@@ -18,7 +18,7 @@ from typing import Literal, Optional
 from lucid_agent_core.components.registry import is_same_install, load_registry, write_registry
 from lucid_agent_core.core.upgrade._github_release import build_wheel_url, fetch_release_asset
 from lucid_agent_core.core.upgrade._download import DOWNLOAD_TIMEOUT_S, MAX_WHEEL_BYTES, download_wheel, verify_sha256
-from lucid_agent_core.core.upgrade._pip import pip_install_wheel
+from lucid_agent_core.core.upgrade._pip import pip_install_wheel, pip_uninstall_dist
 from lucid_agent_core.core.upgrade._validation import (
     ValidationError,
     _GH_NAME_RE,
@@ -185,30 +185,50 @@ def handle_install_component(raw_payload: str) -> InstallResult:
             logger.debug("pip install stdout: %s", (pip_out or "(empty)")[:500])
             logger.debug("pip install stderr: %s", (pip_err or "(empty)")[:500])
 
-        entrypoint = _discover_entrypoint(req.component_id)
-        logger.debug("Entrypoint discovered: %s", entrypoint)
-        _verify_entrypoint(entrypoint)
-
+        # dist_name is derived from the wheel filename — compute it before any
+        # step that might fail so it's available for rollback.
         dist_name = _extract_dist_name_from_wheel(asset)
 
-        registry[req.component_id] = {
-            "repo": f"{req.source.owner}/{req.source.repo}",
-            "version": req.source.version,
-            "wheel_url": wheel_url,
-            "entrypoint": entrypoint,
-            "sha256": req.source.sha256.lower(),
-            "dist_name": dist_name,
-            "enabled": True,
-            "source": {
-                "type": req.source.type,
-                "owner": req.source.owner,
-                "repo": req.source.repo,
-                "tag": tag,
-                "asset": asset,
-            },
-            "installed_at": ts,
-        }
-        write_registry(registry)
+        try:
+            entrypoint = _discover_entrypoint(req.component_id)
+            logger.debug("Entrypoint discovered: %s", entrypoint)
+            _verify_entrypoint(entrypoint)
+
+            registry[req.component_id] = {
+                "repo": f"{req.source.owner}/{req.source.repo}",
+                "version": req.source.version,
+                "wheel_url": wheel_url,
+                "entrypoint": entrypoint,
+                "sha256": req.source.sha256.lower(),
+                "dist_name": dist_name,
+                "enabled": True,
+                "source": {
+                    "type": req.source.type,
+                    "owner": req.source.owner,
+                    "repo": req.source.repo,
+                    "tag": tag,
+                    "asset": asset,
+                },
+                "installed_at": ts,
+            }
+            write_registry(registry)
+        except Exception as post_exc:
+            logger.error(
+                "Post-install step failed for component=%s (%s) — attempting rollback",
+                req.component_id,
+                post_exc,
+            )
+            try:
+                pip_uninstall_dist(dist_name)
+                logger.info("Rollback complete: uninstalled %s", dist_name)
+            except Exception as rollback_exc:
+                logger.error(
+                    "Rollback failed for %s: %s — system may be in inconsistent state",
+                    dist_name,
+                    rollback_exc,
+                )
+            raise
+
         logger.info(
             "Registry updated: component=%s version=%s entrypoint=%s",
             req.component_id,

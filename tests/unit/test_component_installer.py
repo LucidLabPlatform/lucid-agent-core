@@ -162,6 +162,7 @@ def test_missing_entrypoint_returns_error(monkeypatch):
     monkeypatch.setattr(ci, "download_wheel", lambda *a, **k: None)
     monkeypatch.setattr(ci, "verify_sha256", lambda *a, **k: None)
     monkeypatch.setattr(ci, "pip_install_wheel", lambda *a, **k: ("ok", ""))
+    monkeypatch.setattr(ci, "pip_uninstall_dist", MagicMock())  # rollback must be mocked
 
     def fake_discover(component_id):
         raise ci.ValidationError("no entry point for component_id='cpu'")
@@ -212,6 +213,69 @@ def test_success_updates_registry_and_requests_restart(monkeypatch):
     assert cpu["source"]["type"] == "github_release"
     assert cpu["source"]["tag"] == "v1.2.3"
     assert cpu["source"]["asset"] == "lucid_agent_cpu-1.2.3-py3-none-any.whl"
+
+
+def _patch_happy_path_up_to_pip(monkeypatch):
+    """Patch everything up to and including pip_install_wheel succeeding."""
+    monkeypatch.setattr(ci, "load_registry", lambda: {})
+    monkeypatch.setattr(ci, "is_same_install", lambda *a: False)
+    monkeypatch.setattr(ci, "fetch_release_asset", lambda *a: "lucid_agent_cpu-1.2.3-py3-none-any.whl")
+    monkeypatch.setattr(ci, "build_wheel_url", lambda *a: "https://example.com/wheel.whl")
+    monkeypatch.setattr(ci, "download_wheel", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "verify_sha256", lambda *a, **k: None)
+    monkeypatch.setattr(ci, "pip_install_wheel", lambda *a, **k: ("ok", ""))
+
+
+def test_registry_write_failure_triggers_rollback(monkeypatch):
+    _patch_happy_path_up_to_pip(monkeypatch)
+    monkeypatch.setattr(ci, "_discover_entrypoint", lambda cid: "some.module:CPU")
+    monkeypatch.setattr(ci, "_verify_entrypoint", lambda *a: None)
+    monkeypatch.setattr(ci, "write_registry", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+
+    uninstall = MagicMock()
+    monkeypatch.setattr(ci, "pip_uninstall_dist", uninstall)
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is False
+    assert "disk full" in (res.error or "")
+    uninstall.assert_called_once_with("lucid-agent-cpu")
+
+
+def test_entrypoint_failure_triggers_rollback(monkeypatch):
+    _patch_happy_path_up_to_pip(monkeypatch)
+    monkeypatch.setattr(
+        ci,
+        "_discover_entrypoint",
+        lambda cid: (_ for _ in ()).throw(ci.ValidationError("no entry point")),
+    )
+
+    uninstall = MagicMock()
+    monkeypatch.setattr(ci, "pip_uninstall_dist", uninstall)
+
+    res = ci.handle_install_component(valid_payload())
+
+    assert res.ok is False
+    assert "no entry point" in (res.error or "")
+    uninstall.assert_called_once_with("lucid-agent-cpu")
+
+
+def test_rollback_failure_is_logged_but_does_not_crash(monkeypatch):
+    _patch_happy_path_up_to_pip(monkeypatch)
+    monkeypatch.setattr(ci, "_discover_entrypoint", lambda cid: "some.module:CPU")
+    monkeypatch.setattr(ci, "_verify_entrypoint", lambda *a: None)
+    monkeypatch.setattr(ci, "write_registry", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        ci,
+        "pip_uninstall_dist",
+        lambda *a: (_ for _ in ()).throw(RuntimeError("pip gone")),
+    )
+
+    res = ci.handle_install_component(valid_payload())
+
+    # Original error still surfaces; rollback failure does not mask it
+    assert res.ok is False
+    assert "disk full" in (res.error or "")
 
 
 def test_extract_version_best_effort_reads_from_source():
