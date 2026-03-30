@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,6 +18,7 @@ def sandbox_paths(monkeypatch, tmp_path: Path):
     base = home / "lucid-agent-core"
     systemd = tmp_path / "etc" / "systemd" / "system"
 
+    monkeypatch.setattr(inst, "SYSTEM_HOME", home)
     monkeypatch.setattr(inst, "BASE_DIR", base)
     monkeypatch.setattr(inst, "ENV_PATH", base / "agent-core.env")
     monkeypatch.setattr(inst, "VENV_DIR", base / "venv")
@@ -64,27 +65,94 @@ def mock_run_user_missing(monkeypatch):
     return calls
 
 
-def test_ensure_user_creates_user_if_missing(mock_run_user_missing):
+def test_ensure_user_creates_user_if_missing(sandbox_paths, mock_run_user_missing):
     """Test that _ensure_user creates lucid user with correct parameters."""
     inst._ensure_user()
 
     # Should call: id lucid (which raises CalledProcessError)
     # Then call: useradd -m -d /home/lucid -s /bin/bash lucid
     cmds = [c[0] for c in mock_run_user_missing]
-    
+
     assert ("id", "lucid") in cmds
-    assert ("useradd", "-m", "-d", "/home/lucid", "-s", "/bin/bash", "lucid") in cmds
+    assert (
+        "useradd",
+        "-m",
+        "-d",
+        str(inst.SYSTEM_HOME),
+        "-s",
+        "/bin/bash",
+        "lucid",
+    ) in cmds
+    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
 
 
-def test_ensure_user_skips_if_exists(mock_run):
+def test_ensure_user_reuses_existing_home_if_missing(sandbox_paths, mock_run_user_missing):
+    """Test that _ensure_user reuses a pre-existing home directory."""
+    inst.SYSTEM_HOME.mkdir(parents=True, exist_ok=True)
+
+    inst._ensure_user()
+
+    cmds = [c[0] for c in mock_run_user_missing]
+
+    assert ("id", "lucid") in cmds
+    assert (
+        "useradd",
+        "-M",
+        "-d",
+        str(inst.SYSTEM_HOME),
+        "-s",
+        "/bin/bash",
+        "lucid",
+    ) in cmds
+    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+
+
+def test_ensure_user_falls_back_when_useradd_m_cannot_create_home(sandbox_paths, monkeypatch):
+    """Test that _ensure_user pre-creates the home directory and retries."""
+    calls = []
+    create_cmd = ("useradd", "-m", "-d", str(inst.SYSTEM_HOME), "-s", "/bin/bash", "lucid")
+    reuse_cmd = ("useradd", "-M", "-d", str(inst.SYSTEM_HOME), "-s", "/bin/bash", "lucid")
+
+    def fake_run(cmd, check=True):
+        calls.append((tuple(cmd), check))
+        if cmd[0] == "id" and cmd[1] == "lucid":
+            raise subprocess.CalledProcessError(1, cmd)
+        if tuple(cmd) == create_cmd:
+            raise subprocess.CalledProcessError(12, cmd)
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr(inst, "_run", fake_run)
+
+    inst._ensure_user()
+
+    cmds = [c[0] for c in calls]
+    assert create_cmd in cmds
+    assert reuse_cmd in cmds
+    assert inst.SYSTEM_HOME.is_dir()
+    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+
+
+def test_ensure_user_rejects_non_directory_home(sandbox_paths, mock_run_user_missing):
+    """Test that _ensure_user fails clearly if /home/lucid is a file."""
+    inst.SYSTEM_HOME.parent.mkdir(parents=True, exist_ok=True)
+    inst.SYSTEM_HOME.write_text("not a directory")
+
+    with pytest.raises(RuntimeError, match="not a directory"):
+        inst._ensure_user()
+
+    assert mock_run_user_missing == []
+
+
+def test_ensure_user_skips_if_exists(sandbox_paths, mock_run):
     """Test that _ensure_user doesn't call useradd if user exists."""
     inst._ensure_user()
 
     cmds = [c[0] for c in mock_run]
-    
+
     # Should only check id, not call useradd
     assert ("id", "lucid") in cmds
     assert not any("useradd" in cmd for cmd in cmds)
+    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
 
 
 def test_install_cli_with_local_wheel(sandbox_paths, mock_run, monkeypatch, tmp_path):
