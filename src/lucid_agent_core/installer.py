@@ -29,8 +29,9 @@ from typing import Optional
 # =========================
 SERVICE_NAME = "lucid-agent-core"
 SYSTEM_USER = "lucid"
+SYSTEM_HOME = Path(f"/home/{SYSTEM_USER}")
 
-BASE_DIR = Path("/home/lucid/lucid-agent-core")
+BASE_DIR = SYSTEM_HOME / "lucid-agent-core"
 ENV_PATH = BASE_DIR / "agent-core.env"
 VENV_DIR = BASE_DIR / "venv"
 
@@ -56,25 +57,64 @@ def _ensure_user() -> None:
     Creates user 'lucid' with:
     - Home directory: /home/lucid
     - Shell: /bin/bash
-    - Created with -m (create home) flag
+    - Reuses an existing home directory when present
+    - Falls back to pre-creating the home directory if useradd -m fails
     """
+    home_dir = SYSTEM_HOME
+    if home_dir.exists() and not home_dir.is_dir():
+        raise RuntimeError(
+            f"Cannot create user '{SYSTEM_USER}': home path exists and is not a directory: {home_dir}"
+        )
+
     try:
         _run(["id", SYSTEM_USER])
         print(f"User '{SYSTEM_USER}' already exists")
+        home_dir.mkdir(parents=True, exist_ok=True)
+        _run(["chown", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home_dir)])
+        return
     except subprocess.CalledProcessError:
         print(f"Creating user '{SYSTEM_USER}'...")
-        _run(
-            [
-                "useradd",
-                "-m",  # Create home directory
-                "-d",
-                f"/home/{SYSTEM_USER}",
-                "-s",
-                "/bin/bash",
-                SYSTEM_USER,
-            ]
-        )
-        print(f"User '{SYSTEM_USER}' created successfully")
+
+    create_cmd = [
+        "useradd",
+        "-m",  # Create home directory
+        "-d",
+        str(home_dir),
+        "-s",
+        "/bin/bash",
+        SYSTEM_USER,
+    ]
+    reuse_cmd = [
+        "useradd",
+        "-M",  # Reuse an existing home directory
+        "-d",
+        str(home_dir),
+        "-s",
+        "/bin/bash",
+        SYSTEM_USER,
+    ]
+
+    if home_dir.exists():
+        _run(reuse_cmd)
+    else:
+        try:
+            _run(create_cmd)
+        except subprocess.CalledProcessError:
+            print(
+                f"useradd -m could not create {home_dir}; "
+                "creating the directory manually and retrying..."
+            )
+            home_dir.parent.mkdir(parents=True, exist_ok=True)
+            home_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                _run(reuse_cmd)
+            except subprocess.CalledProcessError as retry_exc:
+                raise RuntimeError(
+                    f"Failed to create user '{SYSTEM_USER}' with home {home_dir}"
+                ) from retry_exc
+
+    _run(["chown", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home_dir)])
+    print(f"User '{SYSTEM_USER}' created successfully")
 
 
 def _ensure_dirs() -> None:
@@ -142,7 +182,7 @@ def _ensure_pip_cache() -> None:
     """
     Ensure pip cache directory exists with correct ownership.
     """
-    cache_dir = Path(f"/home/{SYSTEM_USER}/.cache/pip")
+    cache_dir = SYSTEM_HOME / ".cache" / "pip"
     cache_dir.mkdir(parents=True, exist_ok=True)
     _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(cache_dir.parent)])
     print(f"Ensured pip cache directory: {cache_dir}")
