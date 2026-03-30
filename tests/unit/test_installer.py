@@ -375,3 +375,24 @@ def test_reload_and_enable_calls_systemctl(mock_run):
     cmds = [c[0] for c in mock_run]
     assert ("systemctl", "daemon-reload") in cmds
     assert ("systemctl", "enable", "lucid-agent-core") in cmds
+
+
+def test_write_systemd_unit_uses_overridden_user_and_base_dir(sandbox_paths, monkeypatch):
+    """Test that the generated unit reflects configured user and base path."""
+    monkeypatch.setattr(inst, "SYSTEM_USER", "forfaly")
+    monkeypatch.setattr(inst, "SYSTEM_HOME", Path("/home/forfaly"))
+    monkeypatch.setattr(inst, "BASE_DIR", Path("/home/forfaly/lucid-agent-core"))
+    monkeypatch.setattr(inst, "ENV_PATH", Path("/home/forfaly/lucid-agent-core/agent-core.env"))
+    monkeypatch.setattr(inst, "VENV_DIR", Path("/home/forfaly/lucid-agent-core/venv"))
+    inst.UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    inst._write_systemd_unit()
+
+    unit = inst.UNIT_PATH.read_text()
+    assert "User=forfaly" in unit
+    assert "Group=forfaly" in unit
+    assert "WorkingDirectory=/home/forfaly/lucid-agent-core" in unit
+    assert "EnvironmentFile=/home/forfaly/lucid-agent-core/agent-core.env" in unit
+    assert "ExecStart=/home/forfaly/lucid-agent-core/venv/bin/lucid-agent-core run" in unit
+    assert "ReadWritePaths=/home/forfaly/lucid-agent-core" in unit
+    assert "Environment=LUCID_AGENT_BASE_DIR=/home/forfaly/lucid-agent-core" in unit
