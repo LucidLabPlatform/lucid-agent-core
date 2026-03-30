@@ -3,13 +3,13 @@ System installer for LUCID Agent Core (systemd + venv runtime).
 
 Contract:
 - Idempotent: safe to re-run.
-- Creates lucid user if it doesn't exist with home /home/lucid and shell /bin/bash.
-- Creates /home/lucid/lucid-agent-core/agent-core.env from packaged env.example and never overwrites it.
-- Creates /home/lucid/lucid-agent-core/venv and installs into it.
+- Defaults to user 'lucid' with home /home/lucid, but honors environment overrides.
+- Creates <base>/agent-core.env from packaged env.example and never overwrites it.
+- Creates <base>/venv and installs into it.
 - Supports local wheel installation via --wheel or LUCID_AGENT_CORE_WHEEL env var.
 - Falls back to GitHub release URL if no local wheel provided.
 - Writes/updates the systemd unit and enables the service.
-- All files under /home/lucid with proper permissions.
+- All files under the configured base directory with proper permissions.
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ from typing import Optional
 # Constants
 # =========================
 SERVICE_NAME = "lucid-agent-core"
-SYSTEM_USER = "lucid"
-SYSTEM_HOME = Path(f"/home/{SYSTEM_USER}")
+SYSTEM_USER = os.environ.get("LUCID_AGENT_SYSTEM_USER", "lucid")
+SYSTEM_HOME = Path(os.environ.get("LUCID_AGENT_SYSTEM_HOME", f"/home/{SYSTEM_USER}"))
 
-BASE_DIR = SYSTEM_HOME / "lucid-agent-core"
+BASE_DIR = Path(os.environ.get("LUCID_AGENT_BASE_DIR", str(SYSTEM_HOME / "lucid-agent-core")))
 ENV_PATH = BASE_DIR / "agent-core.env"
 VENV_DIR = BASE_DIR / "venv"
 
@@ -54,8 +54,8 @@ def _ensure_user() -> None:
     """
     Ensure system user exists.
 
-    Creates user 'lucid' with:
-    - Home directory: /home/lucid
+    Creates the configured system user with:
+    - Home directory: the configured SYSTEM_HOME
     - Shell: /bin/bash
     - Reuses an existing home directory when present
     - Falls back to pre-creating the home directory if useradd -m fails
@@ -280,6 +280,17 @@ def _write_systemd_unit() -> None:
 
     except Exception as exc:
         raise RuntimeError(f"Failed to load packaged systemd unit: {exc}") from exc
+
+    content = content.replace("User=lucid", f"User={SYSTEM_USER}")
+    content = content.replace("Group=lucid", f"Group={SYSTEM_USER}")
+    content = content.replace("/home/lucid/lucid-agent-core", str(BASE_DIR))
+    content = content.replace(
+        "Environment=PYTHONUNBUFFERED=1",
+        (
+            "Environment=PYTHONUNBUFFERED=1\n"
+            f"Environment=LUCID_AGENT_BASE_DIR={BASE_DIR}"
+        ),
+    )
 
     UNIT_PATH.write_text(content, encoding="utf-8")
     os.chmod(UNIT_PATH, 0o644)
