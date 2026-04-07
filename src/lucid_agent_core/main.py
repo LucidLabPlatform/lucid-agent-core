@@ -4,7 +4,6 @@ LUCID Agent Core entrypoint.
 CLI:
   lucid-agent-core run                      -> run agent (runtime mode)
   lucid-agent-core install-service          -> install + enable systemd service (sudo; Linux systemd only)
-  lucid-agent-core refresh-service          -> rewrite systemd unit from packaged template + daemon-reload (sudo)
   lucid-agent-core install-led-strip-helper  -> install + start LED strip helper (sudo; run once on device after MQTT install)
 """
 
@@ -224,11 +223,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
-        "refresh-service",
-        help="Rewrite systemd service file from packaged template and reload (requires sudo)",
-    )
-
-    sub.add_parser(
         "install-led-strip-helper",
         help="Install and start the LED strip helper daemon (requires sudo; run once on the device after MQTT install)",
     )
@@ -245,12 +239,6 @@ def main(argv: list[str] | None = None) -> None:
 
         wheel_path = Path(args.wheel) if args.wheel else None
         install_service(wheel_path)
-        return
-
-    if args.cmd == "refresh-service":
-        from lucid_agent_core.installer import refresh_service
-
-        refresh_service()
         return
 
     if args.cmd == "install-led-strip-helper":

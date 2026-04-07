@@ -316,8 +316,7 @@ def _write_systemd_unit() -> None:
         "Environment=PYTHONUNBUFFERED=1",
         (
             "Environment=PYTHONUNBUFFERED=1\n"
-            f"Environment=LUCID_AGENT_BASE_DIR={BASE_DIR}\n"
-            f"Environment=LUCID_AGENT_SYSTEM_USER={SYSTEM_USER}"
+            f"Environment=LUCID_AGENT_BASE_DIR={BASE_DIR}"
         ),
     )
 
@@ -371,18 +370,6 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     print(f"2. Start the service: sudo systemctl start {SERVICE_NAME}")
     print(f"3. Check status: sudo systemctl status {SERVICE_NAME}")
     print("=" * 60)
-
-
-def refresh_service() -> None:
-    """
-    Rewrite the systemd service file from the packaged template and reload.
-
-    Called automatically via ExecStartPre on every service start to keep the
-    service file in sync with the installed package version. Requires root.
-    """
-    _ensure_root()
-    _write_systemd_unit()
-    _reload_and_enable()
 
 
 def install_led_strip_helper() -> None:
