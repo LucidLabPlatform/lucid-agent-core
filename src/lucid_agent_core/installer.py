@@ -316,7 +316,8 @@ def _write_systemd_unit() -> None:
         "Environment=PYTHONUNBUFFERED=1",
         (
             "Environment=PYTHONUNBUFFERED=1\n"
-            f"Environment=LUCID_AGENT_BASE_DIR={BASE_DIR}"
+            f"Environment=LUCID_AGENT_BASE_DIR={BASE_DIR}\n"
+            f"Environment=LUCID_AGENT_SYSTEM_USER={SYSTEM_USER}"
         ),
     )
 
