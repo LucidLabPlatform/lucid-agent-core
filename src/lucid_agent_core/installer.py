@@ -15,6 +15,7 @@ Contract:
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,32 @@ def _ensure_root() -> None:
         raise PermissionError("This command must be run as root (sudo).")
 
 
+def _user_ids() -> tuple[int, int]:
+    try:
+        entry = pwd.getpwnam(SYSTEM_USER)
+    except KeyError as exc:
+        raise RuntimeError(f"System user not found: {SYSTEM_USER}") from exc
+    return entry.pw_uid, entry.pw_gid
+
+
+def _owner_spec() -> str:
+    uid, gid = _user_ids()
+    return f"{uid}:{gid}"
+
+
+def _service_group_spec() -> str:
+    _, gid = _user_ids()
+    return str(gid)
+
+
+def _chown(path: Path, *, recursive: bool = False) -> None:
+    cmd = ["chown"]
+    if recursive:
+        cmd.append("-R")
+    cmd.extend([_owner_spec(), str(path)])
+    _run(cmd)
+
+
 def _ensure_user() -> None:
     """
     Ensure system user exists.
@@ -69,11 +96,12 @@ def _ensure_user() -> None:
     try:
         _run(["id", SYSTEM_USER])
         print(f"User '{SYSTEM_USER}' already exists")
-        home_dir.mkdir(parents=True, exist_ok=True)
-        _run(["chown", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home_dir)])
-        return
     except subprocess.CalledProcessError:
         print(f"Creating user '{SYSTEM_USER}'...")
+    else:
+        home_dir.mkdir(parents=True, exist_ok=True)
+        _chown(home_dir)
+        return
 
     create_cmd = [
         "useradd",
@@ -113,7 +141,7 @@ def _ensure_user() -> None:
                     f"Failed to create user '{SYSTEM_USER}' with home {home_dir}"
                 ) from retry_exc
 
-    _run(["chown", f"{SYSTEM_USER}:{SYSTEM_USER}", str(home_dir)])
+    _chown(home_dir)
     print(f"User '{SYSTEM_USER}' created successfully")
 
 
@@ -137,7 +165,7 @@ def _ensure_dirs() -> None:
         path.mkdir(parents=True, exist_ok=True)
         os.chmod(path, mode)
 
-    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(BASE_DIR)])
+    _chown(BASE_DIR, recursive=True)
 
 
 def _ensure_env_file() -> None:
@@ -159,7 +187,7 @@ def _ensure_env_file() -> None:
         dst.write(content)
 
     os.chmod(ENV_PATH, 0o640)
-    _run(["chown", f"{SYSTEM_USER}:{SYSTEM_USER}", str(ENV_PATH)])
+    _chown(ENV_PATH)
     print(f"Created environment file: {ENV_PATH}")
 
 
@@ -184,7 +212,7 @@ def _ensure_pip_cache() -> None:
     """
     cache_dir = SYSTEM_HOME / ".cache" / "pip"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(cache_dir.parent)])
+    _chown(cache_dir.parent, recursive=True)
     print(f"Ensured pip cache directory: {cache_dir}")
 
 
@@ -194,7 +222,7 @@ def _ensure_venv_permissions() -> None:
     This is critical for pip upgrades to work correctly.
     """
     if VENV_DIR.exists():
-        _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(VENV_DIR)])
+        _chown(VENV_DIR, recursive=True)
         print(f"Fixed venv permissions: {VENV_DIR}")
 
 
@@ -209,7 +237,7 @@ def _create_venv() -> None:
     print(f"Creating virtual environment using {python_exec}...")
     _run([python_exec, "-m", "venv", str(VENV_DIR)])
 
-    _run(["chown", "-R", f"{SYSTEM_USER}:{SYSTEM_USER}", str(BASE_DIR)])
+    _chown(BASE_DIR, recursive=True)
     print(f"Virtual environment created: {VENV_DIR}")
 
 
@@ -282,7 +310,7 @@ def _write_systemd_unit() -> None:
         raise RuntimeError(f"Failed to load packaged systemd unit: {exc}") from exc
 
     content = content.replace("User=lucid", f"User={SYSTEM_USER}")
-    content = content.replace("Group=lucid", f"Group={SYSTEM_USER}")
+    content = content.replace("Group=lucid", f"Group={_service_group_spec()}")
     content = content.replace("/home/lucid/lucid-agent-core", str(BASE_DIR))
     content = content.replace(
         "Environment=PYTHONUNBUFFERED=1",
@@ -342,6 +370,18 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     print(f"2. Start the service: sudo systemctl start {SERVICE_NAME}")
     print(f"3. Check status: sudo systemctl status {SERVICE_NAME}")
     print("=" * 60)
+
+
+def refresh_service() -> None:
+    """
+    Rewrite the systemd service file from the packaged template and reload.
+
+    Called automatically via ExecStartPre on every service start to keep the
+    service file in sync with the installed package version. Requires root.
+    """
+    _ensure_root()
+    _write_systemd_unit()
+    _reload_and_enable()
 
 
 def install_led_strip_helper() -> None:

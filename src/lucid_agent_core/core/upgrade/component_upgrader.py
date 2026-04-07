@@ -113,7 +113,7 @@ def handle_component_upgrade(raw_payload: str) -> ComponentUpgradeResult:
             ok=False,
             ts=ts,
             error=f"validation_error: {exc}",
-            restart_required=True,
+            restart_required=False,
         )
 
     logger.info(
@@ -147,11 +147,58 @@ def handle_component_upgrade(raw_payload: str) -> ComponentUpgradeResult:
             logger.debug("pip upgrade stdout: %s", (pip_out or "(empty)")[:500])
             logger.debug("pip upgrade stderr: %s", (pip_err or "(empty)")[:500])
 
+        # Snapshot the old registry entry before mutating so we can roll back
+        # if the registry write fails after pip has already installed the new wheel.
         registry = load_registry()
-        registry[req.component_id]["version"] = req.version
-        registry[req.component_id]["wheel_url"] = req.wheel_url
-        registry[req.component_id]["sha256"] = req.sha256.lower()
-        write_registry(registry)
+        old_entry = dict(registry.get(req.component_id) or {})
+
+        try:
+            entry = registry.setdefault(req.component_id, {})
+            entry["version"] = req.version
+            entry["wheel_url"] = req.wheel_url
+            entry["sha256"] = req.sha256.lower()
+            write_registry(registry)
+        except Exception as post_exc:
+            logger.error(
+                "Post-upgrade registry write failed for component=%s (%s) — attempting rollback",
+                req.component_id,
+                post_exc,
+            )
+            old_wheel_url = old_entry.get("wheel_url", "")
+            old_version = old_entry.get("version", "")
+            old_dist = (old_entry.get("dist_name") or req.dist_name).replace("-", "_")
+            if old_wheel_url and old_version:
+                try:
+                    with tempfile.TemporaryDirectory() as rollback_tmp:
+                        old_wheel_path = (
+                            Path(rollback_tmp) / f"{old_dist}-{old_version}-py3-none-any.whl"
+                        )
+                        download_wheel(
+                            old_wheel_url,
+                            old_wheel_path,
+                            timeout_s=DOWNLOAD_TIMEOUT_S,
+                            max_bytes=MAX_WHEEL_BYTES,
+                            user_agent="lucid-agent-core/component-upgrader-rollback",
+                        )
+                        pip_upgrade_wheel(old_wheel_path)
+                        logger.info(
+                            "Rollback complete: reinstalled component=%s version=%s",
+                            req.component_id,
+                            old_version,
+                        )
+                except Exception as rollback_exc:
+                    logger.error(
+                        "Rollback failed for component=%s: %s — system may be in inconsistent state",
+                        req.component_id,
+                        rollback_exc,
+                    )
+            else:
+                logger.error(
+                    "No previous wheel_url/version for component=%s — system may be in inconsistent state",
+                    req.component_id,
+                )
+            raise post_exc
+
         logger.info("Registry updated: component=%s version=%s", req.component_id, req.version)
         logger.info(
             "Component upgrade complete: component=%s version=%s", req.component_id, req.version

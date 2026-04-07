@@ -10,6 +10,7 @@ Group=lucid
 WorkingDirectory=/home/lucid/lucid-agent-core
 EnvironmentFile=/home/lucid/lucid-agent-core/agent-core.env
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=+/home/lucid/lucid-agent-core/venv/bin/lucid-agent-core refresh-service
 ExecStart=/home/lucid/lucid-agent-core/venv/bin/lucid-agent-core run
 Restart=always
 RestartSec=5

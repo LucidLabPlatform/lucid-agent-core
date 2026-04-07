@@ -96,14 +96,6 @@ def load_config(*, dotenv_enabled: bool = True) -> AgentConfig:
                     # or we'll rely on process environment variables.
                     pass
 
-            # final pass: allow local .env to override explicitly if desired
-            # (but keep process env highest priority anyway)
-            try:
-                if Path(".env").is_file():
-                    load_dotenv(Path(".env"), override=True)
-            except PermissionError:
-                # Can't access .env file, skip it
-                pass
 
     mqtt_host = _require_env("MQTT_HOST")
     mqtt_port = _parse_int("MQTT_PORT", _require_env("MQTT_PORT"))
