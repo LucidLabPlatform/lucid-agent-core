@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(python3.11 -m ruff check src/lucid_agent_core/ --fix 2>&1)",
+      "Bash(/opt/homebrew/bin/pytest /Users/farahorfaly/Desktop/LUCID/components/lucid-component-base/tests/ --no-cov -q)",
+      "Bash(PYTHONPATH=/Users/farahorfaly/Desktop/LUCID/components/lucid-component-base/src /opt/homebrew/bin/pytest /Users/farahorfaly/Desktop/LUCID/components/lucid-component-base/tests/ --no-cov -q)",
+      "Bash(find /Users/farahorfaly/Desktop/LUCID/components/lucid-component-base -name \"*.py\" -type f -exec grep -n \"^\\\\s*#.*[a-zA-Z]\" {} +)",
+      "Bash(grep -v \"#!/\\\\|^[^:]*:\\\\s*#\\\\s*$\\\\|^[^:]*:\\\\s*#.*type:\")",
+      "Bash(python3 -m py_compile src/lucid_component_base/*.py tests/*.py)",
+      "Bash(python3 -m py_compile src/lucid_agent_core/**/*.py)",
+      "Bash(grep -n \"^import\\\\|^from\" src/lucid_component_base/*.py)",
+      "Bash(git -C /Users/farahorfaly/Desktop/LUCID/components/lucid-component-base diff README.md)",
+      "Bash(python3:*)",
+      "Bash(find /Users/farahorfaly/Desktop/LUCID -name *install* -type f)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

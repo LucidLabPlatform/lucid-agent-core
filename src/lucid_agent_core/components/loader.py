@@ -117,3 +117,37 @@ def load_components(
             )
 
     return components, results
+
+
+def load_single_component(
+    component_id: str,
+    registry_entry: dict[str, Any],
+    agent_id: str,
+    base_topic: str,
+    mqtt: Any,
+) -> Component | None:
+    """
+    Dynamically load a single component from its registry entry.
+    Returns the component instance (not started) or None on failure.
+    """
+    entrypoint = registry_entry.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        logger.error("Cannot load %s: missing/invalid entrypoint", component_id)
+        return None
+
+    context = ComponentContext.create(
+        agent_id=agent_id,
+        base_topic=base_topic,
+        component_id=component_id,
+        mqtt=mqtt,
+        config=registry_entry.get("config") or {},
+    )
+
+    module_path, class_name = _parse_entrypoint(entrypoint)
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+
+    if not isinstance(cls, type) or not issubclass(cls, Component):
+        raise TypeError(f"entrypoint class is not a Component subclass: {entrypoint}")
+
+    return cls(context)

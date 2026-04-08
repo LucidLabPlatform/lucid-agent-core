@@ -306,8 +306,38 @@ class AgentMQTTClient:
                                current_status.value)
                 return False
 
-        logger.warning("Component %s not loaded; restart agent to load disabled components", component_id)
-        return False
+        # Component not in memory — try dynamic loading (e.g. after install)
+        logger.info("Component %s not loaded; attempting dynamic load", component_id)
+        try:
+            import importlib
+            importlib.invalidate_caches()
+            from lucid_agent_core.components.loader import load_single_component
+
+            comp = load_single_component(
+                component_id=component_id,
+                registry_entry=meta,
+                agent_id=self.username,
+                base_topic=self.topics.base,
+                mqtt=self,
+            )
+            if comp is None:
+                logger.warning("Dynamic load failed for %s — restart required", component_id)
+                return False
+
+            comp.start()
+            with self._components_lock:
+                self._components.append(comp)
+            self._subscribe_component_topics(comp, component_id)
+            if hasattr(comp, "_publish_all_retained"):
+                try:
+                    comp._publish_all_retained()
+                except Exception as exc:
+                    logger.warning("Failed to republish retained for %s: %s", component_id, exc)
+            logger.info("Dynamically loaded and started component: %s", component_id)
+            return True
+        except Exception as exc:
+            logger.exception("Dynamic load failed for %s: %s — restart required", component_id, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Retained publishing
@@ -395,7 +425,10 @@ class AgentMQTTClient:
             return
 
         try:
-            from lucid_agent_core.core.snapshots import build_metadata, build_status, build_cfg
+            from lucid_agent_core.core.snapshots import (
+                build_metadata, build_status, build_cfg,
+                build_cfg_logging, build_cfg_telemetry,
+            )
 
             ctx = self._ctx
             metadata = build_metadata(ctx.agent_id, self.version)
@@ -406,6 +439,8 @@ class AgentMQTTClient:
 
             cfg = ctx.config_store.get_cached()
             ctx.publish(self.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
+            ctx.publish(self.topics.cfg_logging(), build_cfg_logging(cfg), retain=True, qos=1)
+            ctx.publish(self.topics.cfg_telemetry(), build_cfg_telemetry(cfg), retain=True, qos=1)
 
             logger.info("Published all retained snapshots on connect")
         except Exception as exc:
@@ -472,7 +507,7 @@ class AgentMQTTClient:
             )
             client.username_pw_set(self.username, self.password)
 
-            lwt_payload = {"state": "offline", "agent_id": self.username, "version": self.version}
+            lwt_payload = {"state": "offline", "agent_id": self.username}
             client.will_set(
                 self.topics.status(),
                 payload=json.dumps(lwt_payload),
