@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 
@@ -14,15 +15,24 @@ logger = logging.getLogger(__name__)
 _RESTART_DEBOUNCE_S = 10
 
 
-def _is_systemd_like() -> bool:
+def _is_managed() -> bool:
     """
-    Best-effort check: under systemd, INVOCATION_ID is often present and/or
-    we have a systemd runtime directory. This is not perfect, but it prevents
-    accidental kills in dev.
+    Best-effort check: running under a service manager (systemd or launchd).
+
+    Detects:
+    - systemd: INVOCATION_ID env var or /run/systemd/system exists
+    - launchd: macOS with parent PID 1 (launched by launchd)
+    - Explicit: LUCID_MANAGED env var set (works for any service manager)
     """
     if os.getenv("INVOCATION_ID"):
         return True
-    return Path("/run/systemd/system").exists()
+    if Path("/run/systemd/system").exists():
+        return True
+    if sys.platform == "darwin" and os.getppid() == 1:
+        return True
+    if os.getenv("LUCID_MANAGED"):
+        return True
+    return False
 
 
 def request_systemd_restart(reason: str = "restart requested") -> bool:
@@ -33,12 +43,12 @@ def request_systemd_restart(reason: str = "restart requested") -> bool:
       True if a restart signal was sent, False if suppressed or not safe.
 
     Safety behavior:
-    - If not running under systemd-like environment, do not kill the process.
+    - If not running under a managed environment, do not kill the process.
     - Debounce repeated restart requests.
     - Record the request to a sentinel file for observability.
     """
-    if not _is_systemd_like():
-        logger.warning("Restart requested (%s) but systemd not detected; ignoring", reason)
+    if not _is_managed():
+        logger.warning("Restart requested (%s) but service manager not detected; ignoring", reason)
         return False
 
     paths = get_paths()

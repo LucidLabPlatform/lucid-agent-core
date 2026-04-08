@@ -13,17 +13,24 @@ import lucid_agent_core.installer as inst
 def sandbox_paths(monkeypatch, tmp_path: Path):
     """
     Redirect installer filesystem locations into a temp directory.
+    Forces Linux mode and mocks pwd lookups so tests run on any OS.
     """
     home = tmp_path / "home" / "lucid"
     base = home / "lucid-agent-core"
     systemd = tmp_path / "etc" / "systemd" / "system"
 
+    monkeypatch.setattr(inst, "IS_MACOS", False)
+    monkeypatch.setattr(inst, "SYSTEM_USER", "lucid")
     monkeypatch.setattr(inst, "SYSTEM_HOME", home)
     monkeypatch.setattr(inst, "BASE_DIR", base)
     monkeypatch.setattr(inst, "ENV_PATH", base / "agent-core.env")
     monkeypatch.setattr(inst, "VENV_DIR", base / "venv")
     monkeypatch.setattr(inst, "UNIT_PATH", systemd / "lucid-agent-core.service")
     monkeypatch.setattr(inst, "_ensure_pip_cache", lambda: None)
+
+    # Mock pwd lookups so tests run on macOS (no 'lucid' user)
+    fake_pw = MagicMock(pw_uid=1001, pw_gid=1001)
+    monkeypatch.setattr(inst.pwd, "getpwnam", lambda name: fake_pw)
 
     return tmp_path
 
@@ -83,7 +90,7 @@ def test_ensure_user_creates_user_if_missing(sandbox_paths, mock_run_user_missin
         "/bin/bash",
         "lucid",
     ) in cmds
-    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+    assert ("chown", "1001:1001", str(inst.SYSTEM_HOME)) in cmds
 
 
 def test_ensure_user_reuses_existing_home_if_missing(sandbox_paths, mock_run_user_missing):
@@ -104,7 +111,7 @@ def test_ensure_user_reuses_existing_home_if_missing(sandbox_paths, mock_run_use
         "/bin/bash",
         "lucid",
     ) in cmds
-    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+    assert ("chown", "1001:1001", str(inst.SYSTEM_HOME)) in cmds
 
 
 def test_ensure_user_falls_back_when_useradd_m_cannot_create_home(sandbox_paths, monkeypatch):
@@ -129,7 +136,7 @@ def test_ensure_user_falls_back_when_useradd_m_cannot_create_home(sandbox_paths,
     assert create_cmd in cmds
     assert reuse_cmd in cmds
     assert inst.SYSTEM_HOME.is_dir()
-    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+    assert ("chown", "1001:1001", str(inst.SYSTEM_HOME)) in cmds
 
 
 def test_ensure_user_rejects_non_directory_home(sandbox_paths, mock_run_user_missing):
@@ -152,7 +159,7 @@ def test_ensure_user_skips_if_exists(sandbox_paths, mock_run):
     # Should only check id, not call useradd
     assert ("id", "lucid") in cmds
     assert not any("useradd" in cmd for cmd in cmds)
-    assert ("chown", "lucid:lucid", str(inst.SYSTEM_HOME)) in cmds
+    assert ("chown", "1001:1001", str(inst.SYSTEM_HOME)) in cmds
 
 
 def test_install_cli_with_local_wheel(sandbox_paths, mock_run, monkeypatch, tmp_path):
@@ -384,13 +391,16 @@ def test_write_systemd_unit_uses_overridden_user_and_base_dir(sandbox_paths, mon
     monkeypatch.setattr(inst, "BASE_DIR", Path("/home/forfaly/lucid-agent-core"))
     monkeypatch.setattr(inst, "ENV_PATH", Path("/home/forfaly/lucid-agent-core/agent-core.env"))
     monkeypatch.setattr(inst, "VENV_DIR", Path("/home/forfaly/lucid-agent-core/venv"))
+    # Mock pwd for the custom user
+    fake_pw = MagicMock(pw_uid=2000, pw_gid=2000)
+    monkeypatch.setattr(inst.pwd, "getpwnam", lambda name: fake_pw)
     inst.UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     inst._write_systemd_unit()
 
     unit = inst.UNIT_PATH.read_text()
     assert "User=forfaly" in unit
-    assert "Group=forfaly" in unit
+    assert "Group=2000" in unit
     assert "WorkingDirectory=/home/forfaly/lucid-agent-core" in unit
     assert "EnvironmentFile=/home/forfaly/lucid-agent-core/agent-core.env" in unit
     assert "ExecStart=/home/forfaly/lucid-agent-core/venv/bin/lucid-agent-core run" in unit

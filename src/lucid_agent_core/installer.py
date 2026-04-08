@@ -1,20 +1,23 @@
 """
-System installer for LUCID Agent Core (systemd + venv runtime).
+System installer for LUCID Agent Core (systemd/launchd + venv runtime).
 
 Contract:
 - Idempotent: safe to re-run.
-- Defaults to user 'lucid' with home /home/lucid, but honors environment overrides.
+- Linux: defaults to user 'lucid' with home /home/lucid, systemd service.
+- macOS: runs as current user, launchd plist in ~/Library/LaunchAgents/.
+- Honors environment overrides for user, home, and base directory.
 - Creates <base>/agent-core.env from packaged env.example and never overwrites it.
 - Creates <base>/venv and installs into it.
 - Supports local wheel installation via --wheel or LUCID_AGENT_CORE_WHEEL env var.
 - Falls back to GitHub release URL if no local wheel provided.
-- Writes/updates the systemd unit and enables the service.
+- Writes/updates the service unit and enables it.
 - All files under the configured base directory with proper permissions.
 """
 
 from __future__ import annotations
 
 import os
+import plistlib
 import pwd
 import shutil
 import subprocess
@@ -24,11 +27,14 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Optional
 
+IS_MACOS = sys.platform == "darwin"
 
 # =========================
-# Constants
+# Constants (Linux defaults — macOS paths computed dynamically)
 # =========================
 SERVICE_NAME = "lucid-agent-core"
+PLIST_LABEL = "com.lucid.agent-core"
+
 SYSTEM_USER = os.environ.get("LUCID_AGENT_SYSTEM_USER", "lucid")
 SYSTEM_HOME = Path(os.environ.get("LUCID_AGENT_SYSTEM_HOME", f"/home/{SYSTEM_USER}"))
 
@@ -332,19 +338,150 @@ def _reload_and_enable() -> None:
 
 
 # =========================
+# macOS / launchd
+# =========================
+def _parse_env_file_at(path: Path) -> dict[str, str]:
+    """Parse an env file into a dict of key=value pairs."""
+    env_vars: dict[str, str] = {}
+    if not path.exists():
+        return env_vars
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            env_vars[key.strip()] = value.strip()
+    return env_vars
+
+
+def _macos_paths() -> tuple[Path, Path, Path, Path]:
+    """Compute macOS-specific paths: (base_dir, env_path, venv_dir, plist_path)."""
+    home = Path.home()
+    base = Path(os.environ.get("LUCID_AGENT_BASE_DIR", str(home / "lucid-agent-core")))
+    env = base / "agent-core.env"
+    venv = base / "venv"
+    plist = home / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
+    return base, env, venv, plist
+
+
+def install_service_macos(wheel_path: Optional[Path] = None) -> None:
+    """Install and enable lucid-agent-core as a macOS launchd service."""
+    base_dir, env_path, venv_dir, plist_path = _macos_paths()
+
+    # Create directories
+    for path in [base_dir, base_dir / "data", base_dir / "logs", base_dir / "run"]:
+        path.mkdir(parents=True, exist_ok=True)
+
+    # Create env file (reuse shared helper by temporarily pointing module globals)
+    if not env_path.exists():
+        try:
+            env_example = resources.files("lucid_agent_core").joinpath("env.example")
+            with env_example.open("r", encoding="utf-8") as src:
+                content = src.read()
+        except Exception:
+            content = "# LUCID Agent Core environment variables\n"
+        env_path.write_text(content, encoding="utf-8")
+        os.chmod(env_path, 0o640)
+        print(f"Created environment file: {env_path}")
+    else:
+        print(f"Environment file already exists: {env_path}")
+
+    # Create venv
+    if venv_dir.exists():
+        print(f"Virtual environment already exists: {venv_dir}")
+    else:
+        python_exec = _detect_python()
+        print(f"Creating virtual environment using {python_exec}...")
+        _run([python_exec, "-m", "venv", str(venv_dir)])
+        print(f"Virtual environment created: {venv_dir}")
+
+    # Install CLI
+    pip = venv_dir / "bin" / "pip"
+    if not pip.exists():
+        raise FileNotFoundError(f"pip not found in venv: {pip}")
+
+    if wheel_path:
+        if not wheel_path.exists():
+            raise FileNotFoundError(f"Wheel file not found: {wheel_path}")
+        print(f"Installing from local wheel: {wheel_path}")
+        _run([str(pip), "install", "--upgrade", str(wheel_path)])
+    else:
+        version = pkg_version("lucid-agent-core")
+        wheel_url = (
+            f"https://github.com/LucidLabPlatform/lucid-agent-core/"
+            f"releases/download/v{version}/"
+            f"lucid_agent_core-{version}-py3-none-any.whl"
+        )
+        print(f"Installing from GitHub release: {wheel_url}")
+        _run([str(pip), "install", "--upgrade", wheel_url])
+
+    cli = venv_dir / "bin" / "lucid-agent-core"
+    if not cli.exists():
+        raise RuntimeError("CLI executable missing after installation.")
+    print(f"Installation successful: {cli}")
+
+    # Write launchd plist
+    try:
+        plist_template = resources.files("lucid_agent_core").joinpath(
+            "launchd/com.lucid.agent-core.plist"
+        )
+        with plist_template.open("rb") as f:
+            plist = plistlib.load(f)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load packaged launchd plist: {exc}") from exc
+
+    plist["ProgramArguments"] = [str(cli), "run"]
+    plist["WorkingDirectory"] = str(base_dir)
+    plist["StandardOutPath"] = str(base_dir / "logs" / "stdout.log")
+    plist["StandardErrorPath"] = str(base_dir / "logs" / "stderr.log")
+
+    env_dict: dict[str, str] = {
+        "PYTHONUNBUFFERED": "1",
+        "LUCID_MANAGED": "1",
+        "LUCID_AGENT_BASE_DIR": str(base_dir),
+    }
+    env_dict.update(_parse_env_file_at(env_path))
+    plist["EnvironmentVariables"] = env_dict
+
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    with plist_path.open("wb") as f:
+        plistlib.dump(plist, f)
+    print(f"Launchd plist installed: {plist_path}")
+
+    # Load and enable
+    _run(["launchctl", "unload", str(plist_path)], check=False)
+    _run(["launchctl", "load", "-w", str(plist_path)])
+    print(f"Launchd service loaded: {PLIST_LABEL}")
+
+    print("\n" + "=" * 60)
+    print(f"  {SERVICE_NAME} installed and enabled (launchd)")
+    print("=" * 60)
+    print(f"Base directory: {base_dir}")
+    print(f"Configuration: {env_path}")
+    print(f"Plist: {plist_path}")
+    print("\nNext steps:")
+    print(f"1. Edit {env_path} with your MQTT credentials")
+    print(f"2. Reload: launchctl unload {plist_path} && launchctl load -w {plist_path}")
+    print(f"3. Check status: launchctl list | grep {PLIST_LABEL}")
+    print("=" * 60)
+
+
+# =========================
 # Public entrypoint
 # =========================
 def install_service(wheel_path: Optional[Path] = None) -> None:
     """
-    Install and enable lucid-agent-core systemd service.
+    Install and enable lucid-agent-core service.
+
+    On macOS: installs a launchd plist (no root required).
+    On Linux: installs a systemd unit (requires root).
 
     Args:
         wheel_path: Optional path to local wheel file.
                    If not provided, checks LUCID_AGENT_CORE_WHEEL env var.
                    If still not found, installs from GitHub release.
     """
-    _ensure_root()
-
     # Check for wheel path from env var if not provided as argument
     if wheel_path is None:
         env_wheel = os.environ.get("LUCID_AGENT_CORE_WHEEL")
@@ -352,6 +489,11 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
             wheel_path = Path(env_wheel)
             print(f"Using wheel from LUCID_AGENT_CORE_WHEEL: {wheel_path}")
 
+    if IS_MACOS:
+        install_service_macos(wheel_path)
+        return
+
+    _ensure_root()
     _ensure_user()
     _ensure_dirs()
     _ensure_env_file()
@@ -361,7 +503,7 @@ def install_service(wheel_path: Optional[Path] = None) -> None:
     _reload_and_enable()
 
     print("\n" + "=" * 60)
-    print(f"✓ {SERVICE_NAME} installed and enabled successfully!")
+    print(f"  {SERVICE_NAME} installed and enabled successfully!")
     print("=" * 60)
     print(f"Base directory: {BASE_DIR}")
     print(f"Configuration: {ENV_PATH}")
