@@ -22,12 +22,12 @@ def now_iso8601() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def build_metadata(agent_id: str, version: str) -> dict[str, Any]:
+def build_metadata(version: str) -> dict[str, Any]:
     """
-    Build retained metadata. Contract: agent_id, version, platform, architecture.
+    Build retained metadata. Contract: version, platform, architecture.
+    agent_id is carried by the topic path, not the payload.
     """
     return {
-        "agent_id": agent_id,
         "version": version,
         "platform": platform.system() or "unknown",
         "architecture": platform.machine() or "unknown",

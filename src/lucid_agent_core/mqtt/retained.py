@@ -53,7 +53,7 @@ def publish_retained_refresh(
         build_cfg_telemetry,
     )
 
-    metadata = build_metadata(ctx.agent_id, version)
+    metadata = build_metadata(version)
     ctx.publish(topics.metadata(), metadata, retain=True, qos=1)
 
     uptime_s = 0.0

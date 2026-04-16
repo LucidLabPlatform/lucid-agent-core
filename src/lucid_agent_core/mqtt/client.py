@@ -431,7 +431,7 @@ class AgentMQTTClient:
             )
 
             ctx = self._ctx
-            metadata = build_metadata(ctx.agent_id, self.version)
+            metadata = build_metadata(self.version)
             ctx.publish(self.topics.metadata(), metadata, retain=True, qos=1)
 
             status = build_status("online", self._connected_since_ts, 0)

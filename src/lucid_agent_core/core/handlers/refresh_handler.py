@@ -54,7 +54,7 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
             state = build_state(components_list)
             ctx.publish(
                 ctx.topics.metadata(),
-                build_metadata(ctx.agent_id, ctx.agent_version),
+                build_metadata(ctx.agent_version),
                 retain=True,
                 qos=1,
             )
