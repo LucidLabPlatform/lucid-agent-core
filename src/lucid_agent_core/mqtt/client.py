@@ -428,6 +428,7 @@ class AgentMQTTClient:
             from lucid_agent_core.core.snapshots import (
                 build_metadata, build_status, build_cfg,
                 build_cfg_logging, build_cfg_telemetry,
+                build_agent_schema,
             )
 
             ctx = self._ctx
@@ -441,6 +442,7 @@ class AgentMQTTClient:
             ctx.publish(self.topics.cfg(), build_cfg(cfg), retain=True, qos=1)
             ctx.publish(self.topics.cfg_logging(), build_cfg_logging(cfg), retain=True, qos=1)
             ctx.publish(self.topics.cfg_telemetry(), build_cfg_telemetry(cfg), retain=True, qos=1)
+            ctx.publish(self.topics.schema(), build_agent_schema(), retain=True, qos=1)
 
             logger.info("Published all retained snapshots on connect")
         except Exception as exc:
@@ -507,7 +509,7 @@ class AgentMQTTClient:
             )
             client.username_pw_set(self.username, self.password)
 
-            lwt_payload = {"state": "offline", "agent_id": self.username}
+            lwt_payload = {"state": "offline"}
             client.will_set(
                 self.topics.status(),
                 payload=json.dumps(lwt_payload),

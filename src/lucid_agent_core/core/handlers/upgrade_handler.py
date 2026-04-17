@@ -38,7 +38,7 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
         if result.ok:
             registry[result.component_id] = registry.get(result.component_id, {})
             registry[result.component_id]["version"] = result.version
-        components_list = build_components_list(registry, ctx.component_manager)
+        components_list = build_components_list(registry)
         ctx.publish(ctx.topics.state(), build_state(components_list), retain=True, qos=1)
 
         if result.ok:

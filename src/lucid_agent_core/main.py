@@ -19,6 +19,8 @@ from importlib.metadata import PackageNotFoundError, version as pkg_version
 from typing import Optional
 
 from lucid_agent_core.components.loader import load_components
+from lucid_agent_core.config import AgentConfig
+from lucid_agent_core.core.config import ConfigStore
 
 _CONNECT_TIMEOUT_S = 5.0
 _CONNECT_POLL_INTERVAL_S = 0.1
@@ -38,7 +40,6 @@ def _configure_logging(cfg: dict | None = None) -> None:
     apply_log_level(cfg)
 
 
-_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +53,7 @@ def get_version_string() -> str:
 @dataclass
 class Runtime:
     shutdown: threading.Event
-    agent: Optional[object] = None
+    agent: object
     components: Optional[list[object]] = None
 
 
@@ -65,16 +66,30 @@ def _install_signal_handlers(rt: Runtime) -> None:
     signal.signal(signal.SIGTERM, _handler)
 
 
-def _load_runtime_config(app_cfg: object) -> tuple[object, dict]:
-    """Load and cache the runtime config store; apply log level. Returns (store, runtime_cfg)."""
-    from lucid_agent_core.core.config import ConfigStore
-    from lucid_agent_core.core.log_config import apply_log_level
+@dataclass
+class _Bootstrap:
+    app_cfg: AgentConfig
+    config_store: ConfigStore
+    runtime_cfg: dict
+    heartbeat_s: float
 
+
+def _bootstrap() -> _Bootstrap:
+    """Load config, set up paths, configure logging. Call once at startup."""
+    from lucid_agent_core.config import load_config
+    from lucid_agent_core.paths import get_paths, ensure_dirs
+
+    paths = get_paths()
+    ensure_dirs(paths)
+
+    app_cfg = load_config()
     store = ConfigStore()
     runtime_cfg = store.load()
-    apply_log_level(runtime_cfg)
+    _configure_logging(runtime_cfg)
     logger.info("Runtime config loaded: %s", runtime_cfg)
-    return store, runtime_cfg
+
+    heartbeat_s = runtime_cfg.get("heartbeat_s", app_cfg.agent_heartbeat_s)
+    return _Bootstrap(app_cfg=app_cfg, config_store=store, runtime_cfg=runtime_cfg, heartbeat_s=heartbeat_s)
 
 
 def _connect_and_wait(agent: object, timeout_s: float = _CONNECT_TIMEOUT_S) -> bool:
@@ -116,7 +131,7 @@ def _load_and_start_components(
     )
 
     registry = load_registry()
-    components_list = build_components_list(registry, components=components)
+    components_list = build_components_list(registry)
     agent.add_component_handlers(components, registry)  # type: ignore[attr-defined]
     agent.publish_retained_state(components_list)  # type: ignore[attr-defined]
     return components
@@ -127,44 +142,35 @@ def run_agent() -> int:
     Runtime mode: connect to MQTT, publish presence, load components, block until shutdown.
     Returns process exit code.
     """
-    # Lazy imports keep install-service isolated from runtime env/config.
     from lucid_agent_core.mqtt import AgentMQTTClient
-    from lucid_agent_core.config import load_config
     from lucid_agent_core.core.cmd_context import CoreCommandContext
-    from lucid_agent_core.paths import get_paths, ensure_dirs
 
-    paths = get_paths()
-    ensure_dirs(paths)
-
-    app_cfg = load_config()
-    config_store, runtime_cfg = _load_runtime_config(app_cfg)
-    heartbeat_s = runtime_cfg.get("heartbeat_s", app_cfg.agent_heartbeat_s)
-
-    rt = Runtime(shutdown=threading.Event())
-    _install_signal_handlers(rt)
+    boot = _bootstrap()
 
     logger.info("============================================================")
     logger.info("LUCID Agent Core")
     logger.info("Version: %s", get_version_string())
-    logger.info("Agent username: %s", app_cfg.agent_username)
+    logger.info("Agent username: %s", boot.app_cfg.agent_username)
     logger.info("============================================================")
 
     agent = AgentMQTTClient(
-        app_cfg.mqtt_host,
-        app_cfg.mqtt_port,
-        app_cfg.agent_username,
-        app_cfg.agent_password,
-        app_cfg.agent_version,
-        heartbeat_interval_s=heartbeat_s,
+        boot.app_cfg.mqtt_host,
+        boot.app_cfg.mqtt_port,
+        boot.app_cfg.agent_username,
+        boot.app_cfg.agent_password,
+        boot.app_cfg.agent_version,
+        heartbeat_interval_s=boot.heartbeat_s,
     )
-    rt.agent = agent
+
+    rt = Runtime(shutdown=threading.Event(), agent=agent)
+    _install_signal_handlers(rt)
 
     ctx = CoreCommandContext(
         mqtt=agent,
         topics=agent.topics,
-        agent_id=app_cfg.agent_username,
-        agent_version=app_cfg.agent_version,
-        config_store=config_store,
+        agent_id=boot.app_cfg.agent_username,
+        agent_version=boot.app_cfg.agent_version,
+        config_store=boot.config_store,
         component_manager=agent,
     )
     agent.set_context(ctx)
@@ -172,7 +178,7 @@ def run_agent() -> int:
     if not _connect_and_wait(agent):
         return 1
 
-    rt.components = _load_and_start_components(agent, app_cfg)
+    rt.components = _load_and_start_components(agent, boot.app_cfg)
 
     logger.info("Agent running (shutdown via SIGINT/SIGTERM)")
     try:
@@ -195,12 +201,11 @@ def _shutdown(rt: Runtime) -> None:
                 logger.exception("Error stopping component")
         logger.info("Components stopped")
 
-    if rt.agent:
-        try:
-            rt.agent.disconnect()
-        except Exception:
-            logger.exception("Error disconnecting MQTT")
-        logger.info("MQTT disconnected")
+    try:
+        rt.agent.disconnect()
+    except Exception:
+        logger.exception("Error disconnecting MQTT")
+    logger.info("MQTT disconnected")
 
 
 def build_parser() -> argparse.ArgumentParser:

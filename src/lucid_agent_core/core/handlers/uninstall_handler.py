@@ -34,7 +34,7 @@ def on_components_uninstall(ctx: CoreCommandContext, payload_str: str) -> None:
         )
 
         registry = load_registry()
-        components_list = build_components_list(registry, ctx.component_manager)
+        components_list = build_components_list(registry)
         ctx.publish(ctx.topics.state(), build_state(components_list), retain=True, qos=1)
 
         logger.info(

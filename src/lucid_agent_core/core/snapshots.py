@@ -11,11 +11,6 @@ import platform
 from datetime import datetime, timezone
 from typing import Any
 
-try:
-    import psutil
-except ImportError:
-    psutil = None  # type: ignore
-
 
 def now_iso8601() -> str:
     """Return current UTC time as ISO8601 string."""
@@ -50,72 +45,34 @@ def build_status(
     }
 
 
-def _system_cpu_percent() -> float:
-    if psutil is None:
-        return 0.0
-    try:
-        return float(psutil.cpu_percent(interval=None))
-    except Exception:
-        return 0.0
-
-
-def _system_memory_percent() -> float:
-    if psutil is None:
-        return 0.0
-    try:
-        return float(psutil.virtual_memory().percent)
-    except Exception:
-        return 0.0
-
-
-def _system_disk_percent() -> float:
-    if psutil is None:
-        return 0.0
-    try:
-        return float(psutil.disk_usage("/").percent)
-    except Exception:
-        return 0.0
-
-
 def build_components_list(
     registry: dict[str, dict[str, Any]],
-    component_manager: Any | None = None,
-    components: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build components list for state topic.
 
-    Args:
-        registry: Component registry dict {component_id: {enabled, version, ...}}
-        component_manager: Optional (unused, kept for compatibility)
-        components: Optional (unused, kept for compatibility)
-
     Returns:
         List of component dicts: [{component_id, version, enabled}]
     """
-    components_list = []
-    for cid, meta in registry.items():
-        comp_dict = {
+    return [
+        {
             "component_id": cid,
             "version": meta.get("version", "?"),
             "enabled": meta.get("enabled", True),
         }
-        components_list.append(comp_dict)
-
-    return components_list
+        for cid, meta in registry.items()
+    ]
 
 
 def build_state(
     components_list: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Build retained state. Contract: cpu_percent, memory_percent, disk_percent, components.
+    Build retained state. Contract: components.
     components: [ { component_id, version, enabled } ]
+    System metrics (cpu, memory, disk) belong in telemetry, not state.
     """
     return {
-        "cpu_percent": _system_cpu_percent(),
-        "memory_percent": _system_memory_percent(),
-        "disk_percent": _system_disk_percent(),
         "components": list(components_list),
     }
 
@@ -141,13 +98,179 @@ def build_cfg_logging(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_agent_schema() -> dict[str, Any]:
+    """
+    Build the agent-level MQTT topic schema.
+    Describes every topic the agent publishes and subscribes to.
+    """
+    _telemetry_metric_cfg = {
+        "type": "object",
+        "fields": {
+            "enabled": {"type": "boolean"},
+            "interval_s": {"type": "integer", "min": 1},
+            "change_threshold_percent": {"type": "float", "min": 0},
+        },
+    }
+    return {
+        "publishes": {
+            "metadata": {
+                "fields": {
+                    "version": {"type": "string"},
+                    "platform": {"type": "string"},
+                    "architecture": {"type": "string"},
+                },
+            },
+            "status": {
+                "fields": {
+                    "state": {"type": "string", "enum": ["online", "offline", "error", "starting"]},
+                    "connected_since_ts": {"type": "string", "description": "ISO8601 UTC"},
+                    "uptime_s": {"type": "float"},
+                },
+            },
+            "state": {
+                "fields": {
+                    "components": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "fields": {
+                                "component_id": {"type": "string"},
+                                "version": {"type": "string"},
+                                "enabled": {"type": "boolean"},
+                            },
+                        },
+                    },
+                },
+            },
+            "cfg": {
+                "fields": {
+                    "heartbeat_s": {"type": "integer", "min": 5, "max": 3600},
+                },
+            },
+            "cfg/logging": {
+                "fields": {
+                    "log_level": {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+                },
+            },
+            "cfg/telemetry": {
+                "fields": {
+                    "cpu_percent": _telemetry_metric_cfg,
+                    "memory_percent": _telemetry_metric_cfg,
+                    "disk_percent": _telemetry_metric_cfg,
+                },
+            },
+            "logs": {
+                "fields": {
+                    "level": {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+                    "message": {"type": "string"},
+                },
+            },
+            "telemetry/cpu_percent": {"fields": {"value": {"type": "float", "min": 0, "max": 100, "unit": "%"}}},
+            "telemetry/memory_percent": {"fields": {"value": {"type": "float", "min": 0, "max": 100, "unit": "%"}}},
+            "telemetry/disk_percent": {"fields": {"value": {"type": "float", "min": 0, "max": 100, "unit": "%"}}},
+            "schema": {},
+        },
+        "subscribes": {
+            "cmd/ping": {"fields": {}},
+            "cmd/restart": {"fields": {}},
+            "cmd/refresh": {"fields": {}},
+            "cmd/cfg/set": {
+                "fields": {
+                    "set": {
+                        "type": "object",
+                        "fields": {
+                            "heartbeat_s": {"type": "integer", "min": 5, "max": 3600},
+                        },
+                    },
+                },
+            },
+            "cmd/cfg/logging/set": {
+                "fields": {
+                    "set": {
+                        "type": "object",
+                        "fields": {
+                            "log_level": {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+                        },
+                    },
+                },
+            },
+            "cmd/cfg/telemetry/set": {
+                "fields": {
+                    "set": {
+                        "type": "object",
+                        "description": "Per-metric config: {metric_name: {enabled, interval_s, change_threshold_percent}}",
+                    },
+                },
+            },
+            "cmd/components/install": {
+                "fields": {
+                    "component_id": {"type": "string"},
+                    "source": {
+                        "type": "object",
+                        "fields": {
+                            "type": {"type": "string", "enum": ["github_release"]},
+                            "owner": {"type": "string"},
+                            "repo": {"type": "string"},
+                            "version": {"type": "string"},
+                            "sha256": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "cmd/components/uninstall": {
+                "fields": {
+                    "component_id": {"type": "string"},
+                },
+            },
+            "cmd/components/enable": {
+                "fields": {
+                    "component_id": {"type": "string"},
+                },
+            },
+            "cmd/components/disable": {
+                "fields": {
+                    "component_id": {"type": "string"},
+                },
+            },
+            "cmd/components/upgrade": {
+                "fields": {
+                    "component_id": {"type": "string"},
+                    "source": {
+                        "type": "object",
+                        "fields": {
+                            "type": {"type": "string", "enum": ["github_release"]},
+                            "owner": {"type": "string"},
+                            "repo": {"type": "string"},
+                            "version": {"type": "string"},
+                            "sha256": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "cmd/core/upgrade": {
+                "fields": {
+                    "source": {
+                        "type": "object",
+                        "fields": {
+                            "type": {"type": "string", "enum": ["github_release"]},
+                            "version": {"type": "string"},
+                            "sha256": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 def build_cfg_telemetry(cfg: dict[str, Any]) -> dict[str, Any]:
     """
     Build retained cfg/telemetry topic payload.
     Contract: flat metric dict — {metric_name: {enabled, interval_s, change_threshold_percent}}.
-    No nested "metrics" wrapper. Always includes all 3 system metrics with defaults.
+    No nested "metrics" wrapper. Always includes all 3 system metrics so the user can see
+    what is available and toggle them on/off.
     """
-    available_metrics = {"cpu_percent", "memory_percent", "disk_percent"}
+    available_metrics = ["cpu_percent", "memory_percent", "disk_percent"]
     stored_metrics = cfg.get("telemetry", {}).get("metrics", {})
 
     result: dict[str, Any] = {}

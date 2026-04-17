@@ -56,7 +56,7 @@ def on_components_enable(ctx: CoreCommandContext, payload_str: str) -> None:
         else:
             logger.warning("Component %s enable: component_manager not available", component_id)
 
-        components_list = build_components_list(registry, ctx.component_manager)
+        components_list = build_components_list(registry)
         ctx.publish(ctx.topics.state(), build_state(components_list), retain=True, qos=1)
         ctx.publish(
             ctx.topics.evt_components_result("enable"),
@@ -111,7 +111,7 @@ def on_components_disable(ctx: CoreCommandContext, payload_str: str) -> None:
         registry[component_id]["enabled"] = False
         write_registry(registry)
 
-        components_list = build_components_list(registry, ctx.component_manager)
+        components_list = build_components_list(registry)
         ctx.publish(ctx.topics.state(), build_state(components_list), retain=True, qos=1)
         ctx.publish(
             ctx.topics.evt_components_result("disable"),

@@ -13,6 +13,21 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 
+def _system_cpu_percent() -> float:
+    import psutil
+    return psutil.cpu_percent(interval=0.1)
+
+
+def _system_memory_percent() -> float:
+    import psutil
+    return psutil.virtual_memory().percent
+
+
+def _system_disk_percent() -> float:
+    import psutil
+    return psutil.disk_usage("/").percent
+
+
 class TelemetryLoop:
     """
     Publishes core telemetry streams (cpu_percent, memory_percent, disk_percent) on a
@@ -137,12 +152,7 @@ class TelemetryLoop:
                 continue
 
             try:
-                from lucid_agent_core.core.snapshots import (
-                    build_cfg_telemetry,
-                    _system_cpu_percent,
-                    _system_memory_percent,
-                    _system_disk_percent,
-                )
+                from lucid_agent_core.core.snapshots import build_cfg_telemetry
 
                 raw_cfg = ctx.config_store.get_cached()
                 metrics_cfg = build_cfg_telemetry(raw_cfg)

@@ -46,7 +46,7 @@ def on_refresh(ctx: CoreCommandContext, payload_str: str) -> None:
         return
     try:
         registry = load_registry()
-        components_list = build_components_list(registry, ctx.component_manager)
+        components_list = build_components_list(registry)
 
         if hasattr(ctx.mqtt, "publish_retained_refresh"):
             ctx.mqtt.publish_retained_refresh(components_list)

@@ -75,6 +75,9 @@ class TopicSchema:
     def cfg_logging(self) -> str:
         return f"{self.base}/cfg/logging"
 
+    def schema(self) -> str:
+        return f"{self.base}/schema"
+
     # -------------------------
     # Agent stream
     # -------------------------
