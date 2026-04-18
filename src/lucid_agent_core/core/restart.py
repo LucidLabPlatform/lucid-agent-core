@@ -47,7 +47,12 @@ def request_systemd_restart(reason: str = "restart requested") -> bool:
     - Debounce repeated restart requests.
     - Record the request to a sentinel file for observability.
     """
-    if not _is_managed():
+    managed = _is_managed()
+    logger.info(
+        "request_systemd_restart called: reason=%s managed=%s pid=%s",
+        reason, managed, os.getpid(),
+    )
+    if not managed:
         logger.warning("Restart requested (%s) but service manager not detected; ignoring", reason)
         return False
 

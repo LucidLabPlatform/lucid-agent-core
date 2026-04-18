@@ -56,12 +56,19 @@ def on_components_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
         if result.ok and result.restart_required:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
-                logger.info("Component upgrade result published, requesting restart")
-                request_systemd_restart(
-                    reason=f"component upgrade: {result.component_id} to {result.version}"
-                )
+                logger.info("Component upgrade result published successfully")
             except Exception as exc:
-                logger.error("Failed to wait for publish or restart: %s", exc)
+                logger.warning(
+                    "wait_for_publish timed out for component upgrade result, "
+                    "proceeding with restart anyway: %s", exc,
+                )
+            logger.info(
+                "Requesting restart after component upgrade: %s to %s",
+                result.component_id, result.version,
+            )
+            request_systemd_restart(
+                reason=f"component upgrade: {result.component_id} to {result.version}"
+            )
 
     except Exception as exc:
         logger.exception("Unhandled error in on_components_upgrade")
@@ -100,10 +107,14 @@ def on_core_upgrade(ctx: CoreCommandContext, payload_str: str) -> None:
         if result.ok and result.restart_required:
             try:
                 msg_info.wait_for_publish(timeout=2.0)
-                logger.info("Core upgrade result published, requesting restart")
-                request_systemd_restart(reason=f"core upgrade: {result.version}")
+                logger.info("Core upgrade result published successfully")
             except Exception as exc:
-                logger.error("Failed to wait for publish or restart: %s", exc)
+                logger.warning(
+                    "wait_for_publish timed out for core upgrade result, "
+                    "proceeding with restart anyway: %s", exc,
+                )
+            logger.info("Requesting restart after core upgrade to %s", result.version)
+            request_systemd_restart(reason=f"core upgrade: {result.version}")
 
     except Exception as exc:
         logger.exception("Unhandled error in on_core_upgrade")
