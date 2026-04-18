@@ -196,7 +196,7 @@ def _shutdown(rt: Runtime) -> None:
     if rt.components:
         for component in rt.components:
             try:
-                component.stop()
+                component.stop(final=True)
             except Exception:
                 logger.exception("Error stopping component")
         logger.info("Components stopped")
