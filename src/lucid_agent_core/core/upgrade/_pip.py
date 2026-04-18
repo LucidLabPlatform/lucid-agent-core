@@ -35,7 +35,7 @@ def pip_install_wheel(
         raise FileNotFoundError(f"pip executable not found: {pip}")
 
     completed = subprocess.run(
-        [str(pip), "install", "--upgrade", str(wheel_path)],
+        [str(pip), "install", "--force-reinstall", "--no-deps", str(wheel_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -81,7 +81,7 @@ def pip_upgrade_wheel(wheel_path: Path) -> tuple[Optional[str], Optional[str]]:
         raise FileNotFoundError(f"pip executable not found: {pip}")
 
     completed = subprocess.run(
-        [str(pip), "install", "--upgrade", str(wheel_path)],
+        [str(pip), "install", "--force-reinstall", "--no-deps", str(wheel_path)],
         check=False,
         capture_output=True,
         text=True,
