@@ -41,7 +41,7 @@ def publish_retained_refresh(
     version: str,
 ) -> None:
     """
-    Republish all retained snapshots: metadata, status, state, cfg, cfg/logging, cfg/telemetry.
+    Republish all retained snapshots: metadata, status, state, cfg, cfg/logging, cfg/telemetry, schema.
     Use after cmd/refresh to refresh topics without a restart.
     """
     from lucid_agent_core.core.snapshots import (
@@ -51,6 +51,7 @@ def publish_retained_refresh(
         build_cfg,
         build_cfg_logging,
         build_cfg_telemetry,
+        build_agent_schema,
     )
 
     metadata = build_metadata(version)
@@ -73,6 +74,7 @@ def publish_retained_refresh(
     ctx.publish(topics.cfg(), build_cfg(raw_cfg), retain=True, qos=1)
     ctx.publish(topics.cfg_logging(), build_cfg_logging(raw_cfg), retain=True, qos=1)
     ctx.publish(topics.cfg_telemetry(), build_cfg_telemetry(raw_cfg), retain=True, qos=1)
+    ctx.publish(topics.schema(), build_agent_schema(), retain=True, qos=1)
     logger.info(
-        "Published retained refresh (metadata, status, state, cfg, cfg/logging, cfg/telemetry)"
+        "Published retained refresh (metadata, status, state, cfg, cfg/logging, cfg/telemetry, schema)"
     )
