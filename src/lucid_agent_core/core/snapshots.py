@@ -11,6 +11,8 @@ import platform
 from datetime import datetime, timezone
 from typing import Any
 
+from lucid_agent_core.core.config._validation import DEFAULT_LOG_LEVEL
+
 
 def now_iso8601() -> str:
     """Return current UTC time as ISO8601 string."""
@@ -94,7 +96,7 @@ def build_cfg_logging(cfg: dict[str, Any]) -> dict[str, Any]:
     Contract: {log_level}.
     """
     return {
-        "log_level": str(cfg.get("log_level", "ERROR")),
+        "log_level": str(cfg.get("log_level", DEFAULT_LOG_LEVEL)),
     }
 
 

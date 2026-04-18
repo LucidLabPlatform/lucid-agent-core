@@ -16,6 +16,7 @@ ALLOWED_KEYS: dict[str, type] = {
 
 MIN_HEARTBEAT = 5
 MAX_HEARTBEAT = 3600
+DEFAULT_LOG_LEVEL = "INFO"
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 CFG_GENERAL_KEYS: set[str] = {"heartbeat_s"}
 CFG_LOGGING_KEYS: set[str] = {"log_level"}
