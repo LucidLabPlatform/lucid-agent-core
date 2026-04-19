@@ -80,9 +80,7 @@ def test_connect_sets_lwt_and_starts_loop(client, fake_paho_client):
     assert kwargs["qos"] == 1
     obj = json.loads(payload)
     assert obj["state"] == "offline"
-    assert obj.get("agent_id") == "agent_1"
-    assert "version" in obj
-    # LWT is minimal (set once at connect); no connected_since_ts/uptime_s
+    # LWT is minimal: just state (topic already identifies the agent)
 
     fake_paho_client.connect.assert_called_with("localhost", 1883, keepalive=60)
     fake_paho_client.loop_start.assert_called_once()

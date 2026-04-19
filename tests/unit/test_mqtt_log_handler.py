@@ -43,7 +43,7 @@ def test_build_cfg_returns_only_heartbeat_s():
 def test_build_cfg_logging_returns_log_level_only():
     cfg = build_cfg_logging({})
     assert "log_level" in cfg
-    assert cfg["log_level"] == "ERROR"
+    assert cfg["log_level"] == "INFO"
     assert "logs_enabled" not in cfg
 
 
@@ -125,8 +125,16 @@ def test_mqtt_log_handler_publishes():
     handler.emit(record)
     handler._publish_batch()
 
-    assert len(fake_mqtt.published) == 1
-    payload = json.loads(fake_mqtt.published[0]["payload"])
+    # Two publishes: stream log (QoS 0, not retained) + retained recent log
+    assert len(fake_mqtt.published) == 2
+    stream_pub = fake_mqtt.published[0]
+    recent_pub = fake_mqtt.published[1]
+
+    assert stream_pub["retain"] is False
+    assert recent_pub["retain"] is True
+    assert recent_pub["topic"].endswith("/recent")
+
+    payload = json.loads(stream_pub["payload"])
     assert payload["count"] == 1
 
     line = payload["lines"][0]

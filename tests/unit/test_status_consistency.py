@@ -46,24 +46,22 @@ def client(fake_paho_client, monkeypatch):
 
 
 def test_lwt_uses_minimal_schema(client, fake_paho_client):
-    """LWT is minimal: state, agent_id, version (set once at connect; no live uptime)."""
+    """LWT is minimal: just state (set once at connect; topic identifies the agent)."""
     client.connect()
-    
+
     fake_paho_client.will_set.assert_called_once()
     args, kwargs = fake_paho_client.will_set.call_args
-    
+
     topic = args[0]
     payload_str = kwargs.get("payload")
-    
+
     assert topic == "lucid/agents/test/status"
     assert kwargs["retain"] is True
     assert kwargs["qos"] == 1
-    
+
     payload = json.loads(payload_str)
     assert payload["state"] == "offline"
-    assert payload.get("agent_id") == "test"
-    assert "version" in payload
-    assert set(payload.keys()) <= {"state", "agent_id", "version"}
+    assert set(payload.keys()) == {"state"}
 
 
 def test_status_connected_since_ts_stable_across_updates(client, fake_paho_client, tmp_path):

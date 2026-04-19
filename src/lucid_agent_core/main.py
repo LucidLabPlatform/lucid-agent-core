@@ -197,6 +197,12 @@ def _shutdown(rt: Runtime) -> None:
         for component in rt.components:
             try:
                 component.stop(final=True)
+            except TypeError:
+                # Older component-base builds don't accept the final kwarg yet
+                try:
+                    component.stop()
+                except Exception:
+                    logger.exception("Error stopping component")
             except Exception:
                 logger.exception("Error stopping component")
         logger.info("Components stopped")
