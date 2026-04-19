@@ -75,6 +75,11 @@ class AgentMQTTClient:
         # Per-component cmd topics (for unsubscribe on stop)
         self._component_cmd_topics: dict[str, set[str]] = {}
 
+        # Additional subscriptions registered by components (supports wildcards).
+        # Key: topic pattern (may contain + / #).
+        # Value: callback(actual_topic: str, payload_str: str) -> None.
+        self._subscriptions: dict[str, Callable[[str, str], None]] = {}
+
         # Rate-limit concurrent in-flight command handlers. Keeps the
         # executor queue bounded so a flood of MQTT commands cannot exhaust
         # memory or trigger unbounded installs/restarts on the Pi.
@@ -420,6 +425,10 @@ class AgentMQTTClient:
             client.subscribe(topic, qos=1)
             logger.info("Subscribed: %s", topic)
 
+        for topic in list(self._subscriptions.keys()):
+            client.subscribe(topic, qos=0)
+            logger.info("Subscribed (data): %s", topic)
+
         if not self._ctx:
             self._publish_status("online")
             return
@@ -470,6 +479,14 @@ class AgentMQTTClient:
         logger.debug("Message received: topic=%s payload_len=%d", msg.topic, len(msg.payload))
         handler = self._handlers.get(msg.topic)
         if not handler:
+            # Try wildcard subscriptions registered by components.
+            for pattern, callback in list(self._subscriptions.items()):
+                if mqtt.topic_matches_sub(pattern, msg.topic):
+                    try:
+                        callback(msg.topic, msg.payload.decode("utf-8"))
+                    except Exception as exc:
+                        logger.error("Subscription callback failed topic=%s: %s", msg.topic, exc)
+                    return
             logger.warning("Unhandled topic: %s", msg.topic)
             return
         try:
@@ -545,6 +562,34 @@ class AgentMQTTClient:
 
     def is_connected(self) -> bool:
         return bool(self._client and self._client.is_connected())
+
+    def subscribe(
+        self,
+        topic: str,
+        callback: Callable[[str, str], None],
+        *,
+        qos: int = 0,
+    ) -> None:
+        """Register a data subscription (supports MQTT wildcards).
+
+        callback(actual_topic, payload_str) is called on each matching message
+        via the agent's existing MQTT connection — no extra client is created.
+        Re-subscribed automatically on reconnect.
+        """
+        self._subscriptions[topic] = callback
+        if self._client and self._client.is_connected():
+            self._client.subscribe(topic, qos=qos)
+            logger.info("Subscribed (data): %s", topic)
+
+    def unsubscribe(self, topic: str) -> None:
+        """Remove a data subscription registered via subscribe()."""
+        self._subscriptions.pop(topic, None)
+        if self._client and self._client.is_connected():
+            try:
+                self._client.unsubscribe(topic)
+                logger.info("Unsubscribed (data): %s", topic)
+            except Exception as exc:
+                logger.warning("Failed to unsubscribe %s: %s", topic, exc)
 
     def publish(self, topic: str, payload: Any, *, qos: int = 0, retain: bool = False) -> Any:
         if not self._client:
