@@ -7,13 +7,17 @@ verifies SHA256, upgrades the venv via pip, and signals a restart.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from lucid_agent_core.core.upgrade._download import DOWNLOAD_TIMEOUT_S, MAX_WHEEL_BYTES, download_wheel, verify_sha256
+from lucid_agent_core.core.upgrade._github_release import fetch_release_wheel_sha256
 from lucid_agent_core.core.upgrade._pip import pip_upgrade_wheel
 from lucid_agent_core.core.upgrade._validation import (
     ValidationError,
@@ -22,7 +26,11 @@ from lucid_agent_core.core.upgrade._validation import (
     utc_now,
 )
 
-import json
+# Matches: lucid-foo @ git+https://github.com/Owner/repo@v1.2.3
+_LUCID_GIT_DEP_RE = re.compile(
+    r"^(lucid-[\w-]+)\s*@\s*git\+https://github\.com/([^/]+)/([^@\s]+)@v([\d]+\.[\d]+\.[\d]+)",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +128,7 @@ def handle_core_upgrade(raw_payload: str) -> UpgradeResult:
             logger.debug("Verifying SHA256: expected=%s…", req.sha256[:16])
             verify_sha256(wheel_path, expected=req.sha256)
             logger.debug("SHA256 verified OK")
+            _auto_upgrade_lucid_deps(wheel_path)
             logger.info("Running pip upgrade: wheel=%s", req.wheel_filename)
             pip_out, pip_err = pip_upgrade_wheel(wheel_path)
             logger.debug("pip upgrade stdout: %s", (pip_out or "(empty)")[:500])
@@ -149,6 +158,64 @@ def handle_core_upgrade(raw_payload: str) -> UpgradeResult:
             error=str(exc),
             restart_required=False,
         )
+
+
+def _read_lucid_git_deps(wheel_path: Path) -> list[tuple[str, str, str, str]]:
+    """
+    Open *wheel_path* as a zip, parse METADATA Requires-Dist lines, and return
+    [(pkg_name, owner, repo, version)] for every lucid-* dep pinned via a git URL.
+    """
+    deps: list[tuple[str, str, str, str]] = []
+    try:
+        with zipfile.ZipFile(wheel_path) as zf:
+            metadata_names = [n for n in zf.namelist() if n.endswith("/METADATA")]
+            if not metadata_names:
+                return deps
+            metadata = zf.read(metadata_names[0]).decode("utf-8", errors="replace")
+    except Exception as exc:
+        logger.warning("Could not read wheel METADATA for dep auto-upgrade: %s", exc)
+        return deps
+
+    for line in metadata.splitlines():
+        if not line.startswith("Requires-Dist:"):
+            continue
+        value = line[len("Requires-Dist:"):].strip()
+        m = _LUCID_GIT_DEP_RE.match(value)
+        if m:
+            deps.append((m.group(1), m.group(2), m.group(3), m.group(4)))
+    return deps
+
+
+def _auto_upgrade_lucid_deps(wheel_path: Path) -> None:
+    """
+    Read lucid-* git deps from *wheel_path* METADATA and upgrade each one
+    automatically before the core wheel is installed.
+    """
+    deps = _read_lucid_git_deps(wheel_path)
+    if not deps:
+        logger.debug("No lucid git deps found in wheel METADATA")
+        return
+
+    for pkg, owner, repo, version in deps:
+        tag = f"v{version}"
+        logger.info("Auto-upgrading dep %s to %s", pkg, version)
+        try:
+            dep_filename, dep_sha256 = fetch_release_wheel_sha256(owner, repo, tag)
+            dep_url = f"https://github.com/{owner}/{repo}/releases/download/{tag}/{dep_filename}"
+            with tempfile.TemporaryDirectory() as dep_tmp:
+                dep_path = Path(dep_tmp) / dep_filename
+                download_wheel(
+                    dep_url,
+                    dep_path,
+                    timeout_s=DOWNLOAD_TIMEOUT_S,
+                    max_bytes=MAX_WHEEL_BYTES,
+                    user_agent="lucid-agent-core/dep-auto-upgrader",
+                )
+                verify_sha256(dep_path, expected=dep_sha256)
+                pip_upgrade_wheel(dep_path)
+            logger.info("Dep %s upgraded to %s", pkg, version)
+        except Exception as exc:
+            logger.warning("Failed to auto-upgrade dep %s to %s: %s", pkg, version, exc)
 
 
 def _parse_and_validate(raw_payload: str) -> UpgradeRequest:
