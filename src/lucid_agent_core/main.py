@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import threading
 import time
@@ -212,6 +213,13 @@ def _shutdown(rt: Runtime) -> None:
     except Exception:
         logger.exception("Error disconnecting MQTT")
     logger.info("MQTT disconnected")
+
+    # Force-exit when running under systemd to bypass hanging atexit handlers
+    # (e.g. rospy network cleanup when roscore is unreachable, asyncio tasks).
+    # INVOCATION_ID is set by systemd for every service unit — never set in tests.
+    # Components are stopped and MQTT is disconnected so nothing useful remains.
+    if os.getenv("INVOCATION_ID"):
+        os._exit(0)
 
 
 def build_parser() -> argparse.ArgumentParser:
