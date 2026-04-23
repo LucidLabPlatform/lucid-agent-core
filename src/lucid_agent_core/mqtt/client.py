@@ -429,6 +429,25 @@ class AgentMQTTClient:
             client.subscribe(topic, qos=0)
             logger.info("Subscribed (data): %s", topic)
 
+        # If no component handlers were registered yet (add_component_handlers was called
+        # before the connection was ready and returned early), re-run it now.
+        if not self._handlers and self._components:
+            logger.info("Re-running add_component_handlers on connect (was called before connection was ready)")
+            from lucid_agent_core.mqtt.component_subscriptions import subscribe_component_topics
+            with self._components_lock:
+                components = list(self._components)
+            for comp in components:
+                cid = getattr(comp, "component_id", None)
+                if cid:
+                    subscribe_component_topics(
+                        client,
+                        self._handlers,
+                        self._component_cmd_topics,
+                        self.topics,
+                        comp,
+                        cid,
+                    )
+
         if not self._ctx:
             self._publish_status("online")
             return

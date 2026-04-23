@@ -8,6 +8,7 @@ No schema versioning; no legacy fields.
 from __future__ import annotations
 
 import platform
+import socket
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,15 +20,26 @@ def now_iso8601() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _get_ip_address() -> str:
+    """Return the primary LAN IP address of this host."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return "unknown"
+
+
 def build_metadata(version: str) -> dict[str, Any]:
     """
-    Build retained metadata. Contract: version, platform, architecture.
+    Build retained metadata. Contract: version, platform, architecture, ip_address.
     agent_id is carried by the topic path, not the payload.
     """
     return {
         "version": version,
         "platform": platform.system() or "unknown",
         "architecture": platform.machine() or "unknown",
+        "ip_address": _get_ip_address(),
     }
 
 
@@ -120,6 +132,7 @@ def build_agent_schema() -> dict[str, Any]:
                     "version": {"type": "string"},
                     "platform": {"type": "string"},
                     "architecture": {"type": "string"},
+                    "ip_address": {"type": "string"},
                 },
             },
             "status": {
