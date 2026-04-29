@@ -125,14 +125,12 @@ def test_mqtt_log_handler_publishes():
     handler.emit(record)
     handler._publish_batch()
 
-    # Two publishes: stream log (QoS 0, not retained) + retained recent log
-    assert len(fake_mqtt.published) == 2
+    # One publish: stream log (QoS 0, not retained). The retained "/recent"
+    assert len(fake_mqtt.published) == 1
     stream_pub = fake_mqtt.published[0]
-    recent_pub = fake_mqtt.published[1]
 
     assert stream_pub["retain"] is False
-    assert recent_pub["retain"] is True
-    assert recent_pub["topic"].endswith("/recent")
+    assert stream_pub["topic"] == "lucid/agents/agent_1/logs"
 
     payload = json.loads(stream_pub["payload"])
     assert payload["count"] == 1

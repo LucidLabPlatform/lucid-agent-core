@@ -57,11 +57,6 @@ class MQTTLogHandler(logging.Handler):
         self._dropped_count = 0
         self._last_warning_ts = 0.0
 
-        # Ring buffer for retained recent logs
-        self._recent_lines: list[dict[str, Any]] = []
-        self._recent_max = 50
-        self._recent_topic = topic.rsplit("/", 1)[0] + "/logs/recent" if "/" in topic else topic + "/recent"
-
     @staticmethod
     def _level_to_mqtt(levelno: int) -> str:
         level_map = {
@@ -193,11 +188,6 @@ class MQTTLogHandler(logging.Handler):
             "lines": batch,
         }
 
-        # Update retained ring buffer
-        self._recent_lines.extend(batch)
-        if len(self._recent_lines) > self._recent_max:
-            self._recent_lines = self._recent_lines[-self._recent_max:]
-
         # Only publish if client is connected
         if self.mqtt_client and self.mqtt_client.is_connected():
             try:
@@ -206,13 +196,6 @@ class MQTTLogHandler(logging.Handler):
                     json.dumps(payload),
                     qos=0,
                     retain=False,
-                )
-                # Publish retained recent logs
-                self.mqtt_client.publish(
-                    self._recent_topic,
-                    json.dumps({"count": len(self._recent_lines), "lines": self._recent_lines}),
-                    qos=0,
-                    retain=True,
                 )
             except Exception:
                 # Publish failed — count every line in the dropped batch so
