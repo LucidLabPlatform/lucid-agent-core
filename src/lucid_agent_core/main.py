@@ -118,6 +118,8 @@ def _load_and_start_components(
     from lucid_agent_core.components.registry import load_registry
     from lucid_agent_core.core.snapshots import build_components_list
 
+    import json as _json
+
     components, load_results = load_components(
         agent_id=app_cfg.agent_username,  # type: ignore[attr-defined]
         base_topic=agent.topics.base,  # type: ignore[attr-defined]
@@ -131,8 +133,42 @@ def _load_and_start_components(
         ],
     )
 
+    # Publish a retained status topic for every component that failed to load
+    # so Central Command can see the failure instead of timing out on every
+    # command sent to a phantom component. Uses the existing status contract:
+    # {state: "error"} with an explicit "load_failed" marker and the error text.
+    failed_component_ids: set[str] = set()
+    for result in load_results:
+        ok = getattr(result, "ok", None)
+        component_id = getattr(result, "component_id", None)
+        if ok is False and isinstance(component_id, str) and component_id:
+            failed_component_ids.add(component_id)
+            try:
+                topic = agent.topics.component_status(component_id)  # type: ignore[attr-defined]
+                payload = {
+                    "state": "error",
+                    "load_failed": True,
+                    "error": getattr(result, "error", "") or "component failed to load",
+                }
+                agent.publish(topic, _json.dumps(payload), qos=1, retain=True)  # type: ignore[attr-defined]
+                logger.warning(
+                    "Published load_failed status for component=%s error=%s",
+                    component_id,
+                    payload["error"],
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to publish load_failed status for component=%s",
+                    component_id,
+                )
+
     registry = load_registry()
     components_list = build_components_list(registry)
+    # Annotate failed components in the agent's state.components list so
+    # consumers that only read state see the truth, not just the registry.
+    for entry in components_list:
+        if isinstance(entry, dict) and entry.get("component_id") in failed_component_ids:
+            entry["load_failed"] = True
     agent.add_component_handlers(components, registry)  # type: ignore[attr-defined]
     agent.publish_retained_state(components_list)  # type: ignore[attr-defined]
     return components

@@ -145,6 +145,9 @@ class TopicSchema:
     def component_metadata(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/metadata"
 
+    def component_status(self, component_id: str) -> str:
+        return f"{self.component_base(component_id)}/status"
+
     def component_cmd_reset(self, component_id: str) -> str:
         return f"{self.component_base(component_id)}/cmd/reset"
 

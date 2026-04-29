@@ -152,6 +152,7 @@ def build_agent_schema() -> dict[str, Any]:
                                 "component_id": {"type": "string"},
                                 "version": {"type": "string"},
                                 "enabled": {"type": "boolean"},
+                                "load_failed": {"type": "boolean", "description": "True if the component failed to load on agent startup"},
                             },
                         },
                     },
