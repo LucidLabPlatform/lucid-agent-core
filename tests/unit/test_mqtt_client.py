@@ -277,3 +277,185 @@ def test_subscribe_component_topics_subscribes_hyphenated_actions(client, fake_p
     for topic in expected_topics:
         assert topic in client._handlers
         fake_paho_client.subscribe.assert_any_call(topic, qos=1)
+
+
+# ---------------------------------------------------------------------------
+# Drop-old-keep-new rate-limit behaviour
+# ---------------------------------------------------------------------------
+
+
+class _ManualExecutor:
+    """Executor that returns real Future objects in PENDING state.
+
+    Tests can call run_one() to execute a queued future synchronously, or
+    start_one() to mark it RUNNING without executing fn (so the in-flight
+    semaphore stays held while the future is uncancellable).
+    """
+
+    def __init__(self):
+        self.queue: list = []  # list of (Future, callable)
+
+    def submit(self, fn, *args):
+        from concurrent.futures import Future
+        f = Future()
+        self.queue.append((f, lambda: fn(*args)))
+        return f
+
+    def run_one(self, idx: int = 0):
+        f, fn = self.queue.pop(idx)
+        if not f.set_running_or_notify_cancel():
+            return
+        try:
+            f.set_result(fn())
+        except BaseException as exc:
+            f.set_exception(exc)
+
+    def start_one(self, idx: int = 0):
+        """Transition the queued future to RUNNING without executing fn."""
+        f, _ = self.queue[idx]
+        f.set_running_or_notify_cancel()
+
+    def shutdown(self, *a, **k):
+        pass
+
+
+@pytest.fixture
+def client_manual_exec(fake_paho_client, monkeypatch):
+    """AgentMQTTClient bound to a _ManualExecutor with inflight_limit=1."""
+    manual = _ManualExecutor()
+    monkeypatch.setattr(
+        "lucid_agent_core.mqtt.client.ThreadPoolExecutor",
+        lambda *a, **k: manual,
+    )
+    c = AgentMQTTClient(
+        host="localhost",
+        port=1883,
+        username="agent_1",
+        password="pw",
+        version="1.0.0",
+        max_workers=1,
+        heartbeat_interval_s=0,
+        inflight_limit=1,
+    )
+    c._client = fake_paho_client
+    c._manual = manual
+    return c
+
+
+def _result_topic_for(cmd_topic: str) -> str:
+    return cmd_topic.replace("/cmd/", "/evt/", 1) + "/result"
+
+
+def _published_results(fake_paho_client) -> list[dict]:
+    """Return parsed JSON payloads for every publish call to a result topic."""
+    out = []
+    for call in fake_paho_client.publish.call_args_list:
+        args, kwargs = call
+        topic = args[0] if args else kwargs.get("topic")
+        if topic and "/evt/" in topic and topic.endswith("/result"):
+            payload = kwargs.get("payload", args[1] if len(args) > 1 else None)
+            if isinstance(payload, (bytes, bytearray)):
+                payload = payload.decode("utf-8")
+            out.append({"topic": topic, "payload": json.loads(payload)})
+    return out
+
+
+def test_drop_old_when_capacity_full_and_cancellable_future_exists(
+    client_manual_exec, fake_paho_client
+):
+    """A new command displaces a queued (PENDING) one and gets admitted."""
+    c = client_manual_exec
+    topics = TopicSchema("agent_1")
+    cmd_topic = topics.cmd_ping()
+
+    handler_calls = []
+    c._handlers = {cmd_topic: lambda p: handler_calls.append(p)}
+
+    # First message — acquires the only slot, future stays PENDING in queue.
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"old-1"}'
+    ))
+    assert len(c._manual.queue) == 1
+    first_future, _ = c._manual.queue[0]
+    assert first_future.cancelled() is False
+
+    # Second message — semaphore is full; should cancel the queued future
+    # and admit the new command.
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"new-2"}'
+    ))
+
+    assert first_future.cancelled() is True
+    # Executor saw two submits; the second future is the admitted one.
+    assert len(c._manual.queue) == 2
+    new_future, _ = c._manual.queue[1]
+    assert new_future is not first_future
+    assert new_future.cancelled() is False
+    # The agent-core pending deque tracks only the still-live entry.
+    assert len(c._pending) == 1
+    assert c._pending[0].future is new_future
+
+    results = _published_results(fake_paho_client)
+    cancelled = [r for r in results if r["payload"].get("request_id") == "old-1"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["topic"] == _result_topic_for(cmd_topic)
+    assert cancelled[0]["payload"]["ok"] is False
+    assert "cancelled" in cancelled[0]["payload"]["error"].lower()
+
+
+def test_drop_new_fallback_when_no_cancellable_future(
+    client_manual_exec, fake_paho_client
+):
+    """If every in-flight future is RUNNING, the new command is dropped."""
+    c = client_manual_exec
+    topics = TopicSchema("agent_1")
+    cmd_topic = topics.cmd_ping()
+
+    c._handlers = {cmd_topic: lambda p: None}
+
+    # First message — acquires slot, queued future.
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"running-1"}'
+    ))
+    # Mark the future RUNNING without executing fn — semaphore stays held.
+    c._manual.start_one(0)
+    running_future, _ = c._manual.queue[0]
+    assert running_future.running() is True
+
+    # Second message — must NOT cancel the running future; falls back to
+    # publishing an "agent overloaded" failure for the new request_id.
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"new-2"}'
+    ))
+
+    assert running_future.cancelled() is False
+    assert len(c._manual.queue) == 1  # only the still-running first future
+
+    results = _published_results(fake_paho_client)
+    new_failures = [r for r in results if r["payload"].get("request_id") == "new-2"]
+    assert len(new_failures) == 1
+    assert new_failures[0]["payload"]["ok"] is False
+    assert "overloaded" in new_failures[0]["payload"]["error"].lower()
+
+
+def test_cancellation_publishes_failure_with_distinct_error(
+    client_manual_exec, fake_paho_client
+):
+    """The cancelled command's failure result uses a distinct error string."""
+    c = client_manual_exec
+    topics = TopicSchema("agent_1")
+    cmd_topic = topics.cmd_ping()
+    c._handlers = {cmd_topic: lambda p: None}
+
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"victim"}'
+    ))
+    c._on_message(fake_paho_client, None, FakeMQTTMessage(
+        cmd_topic, b'{"request_id":"winner"}'
+    ))
+
+    results = _published_results(fake_paho_client)
+    by_rid = {r["payload"]["request_id"]: r["payload"] for r in results}
+    assert "victim" in by_rid
+    assert by_rid["victim"]["ok"] is False
+    assert by_rid["victim"]["error"] == "cancelled by newer command"

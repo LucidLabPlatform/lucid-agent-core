@@ -12,11 +12,21 @@ import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 import paho.mqtt.client as mqtt
+
+
+@dataclass
+class _PendingCommand:
+    """An in-flight command tracked so newer commands can displace it."""
+    future: Future
+    topic: str
+    request_id: str
 
 from lucid_agent_core.mqtt_topics import TopicSchema
 from lucid_agent_core.mqtt.heartbeat import HeartbeatLoop, StatusPayload
@@ -48,6 +58,7 @@ class AgentMQTTClient:
         keepalive: int = 60,
         max_workers: int = 4,
         heartbeat_interval_s: int = 0,
+        inflight_limit: Optional[int] = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -83,8 +94,17 @@ class AgentMQTTClient:
         # Rate-limit concurrent in-flight command handlers. Keeps the
         # executor queue bounded so a flood of MQTT commands cannot exhaust
         # memory or trigger unbounded installs/restarts on the Pi.
-        self._inflight_limit = max_workers * 8
+        # The default is 16× workers (64 for max_workers=4) but can be
+        # overridden via inflight_limit for high-throughput components like
+        # the LED strip that receive rapid telemetry-driven commands.
+        self._inflight_limit = inflight_limit if inflight_limit is not None else max_workers * 16
         self._inflight_sem = threading.Semaphore(self._inflight_limit)
+
+        # Tracks every submitted cmd handler so a new arrival can cancel
+        # the oldest still-queued (uncancelled, not-yet-running) one when
+        # the in-flight semaphore is full. Mutated under _pending_lock.
+        self._pending: deque[_PendingCommand] = deque()
+        self._pending_lock = threading.Lock()
 
         # Heartbeat
         self._heartbeat = HeartbeatLoop(
@@ -110,6 +130,51 @@ class AgentMQTTClient:
         """Bare paho publish — used by heartbeat/telemetry loops."""
         if self._client:
             return self._client.publish(topic, payload=payload, qos=qos, retain=retain)
+
+    def _publish_cmd_failure(self, cmd_topic: str, request_id: str, error: str) -> None:
+        """Publish a failure result for a cmd that won't be dispatched.
+
+        Derives the result topic from the command topic
+        (.../cmd/{action} → .../evt/{action}/result). No-op when there's
+        no request_id or the topic isn't a cmd topic.
+        """
+        if not request_id or "/cmd/" not in cmd_topic:
+            return
+        result_topic = cmd_topic.replace("/cmd/", "/evt/", 1) + "/result"
+        self._paho_publish(
+            result_topic,
+            json.dumps({"request_id": request_id, "ok": False, "error": error}),
+            qos=1,
+        )
+
+    @staticmethod
+    def _extract_request_id(payload_str: str) -> str:
+        try:
+            obj = json.loads(payload_str) if payload_str else {}
+        except Exception:
+            return ""
+        if isinstance(obj, dict):
+            rid = obj.get("request_id", "")
+            return rid if isinstance(rid, str) else ""
+        return ""
+
+    def _try_cancel_oldest_pending(self) -> Optional[_PendingCommand]:
+        """Cancel the oldest queued (not-yet-running) cmd; return its entry.
+
+        Also opportunistically prunes done() entries. Returns None if no
+        cancellable entry exists. Caller is responsible for releasing the
+        cancelled future's semaphore slot and publishing a failure.
+        """
+        with self._pending_lock:
+            # Prune done() entries first; their _run.finally already released
+            # the semaphore and removed them, but be defensive.
+            while self._pending and self._pending[0].future.done():
+                self._pending.popleft()
+            for idx, entry in enumerate(self._pending):
+                if entry.future.cancel():
+                    del self._pending[idx]
+                    return entry
+            return None
 
     def _get_connection_info(self) -> Optional[tuple[str, float]]:
         """Return (connected_since_ts, connected_ts) if connected, else None."""
@@ -514,21 +579,61 @@ class AgentMQTTClient:
             logger.error("Payload decode failed topic=%s err=%s", msg.topic, exc)
             return
 
+        topic = msg.topic
+        request_id = self._extract_request_id(payload_str)
+
         if not self._inflight_sem.acquire(blocking=False):
-            logger.warning(
-                "Command rate limit reached (%d in-flight); dropping %s",
-                self._inflight_limit,
-                msg.topic,
-            )
-            return
+            cancelled = self._try_cancel_oldest_pending()
+            if cancelled is not None:
+                # Free the cancelled slot and notify the orchestrator that
+                # the displaced command will not produce a normal result.
+                self._inflight_sem.release()
+                self._publish_cmd_failure(
+                    cancelled.topic,
+                    cancelled.request_id,
+                    "cancelled by newer command",
+                )
+                logger.info(
+                    "Cancelled queued cmd %s (request_id=%s) to admit newer %s",
+                    cancelled.topic, cancelled.request_id, topic,
+                )
+                if not self._inflight_sem.acquire(blocking=False):
+                    # Lost a race with another arrival — fall back to drop-new.
+                    logger.warning(
+                        "Command rate limit reached after cancel race; dropping %s",
+                        topic,
+                    )
+                    self._publish_cmd_failure(topic, request_id, "agent overloaded")
+                    return
+            else:
+                logger.warning(
+                    "Command rate limit reached (%d in-flight, none cancellable); "
+                    "dropping %s", self._inflight_limit, topic,
+                )
+                self._publish_cmd_failure(topic, request_id, "agent overloaded")
+                return
+
+        own_pending: Optional[_PendingCommand] = None
 
         def _run() -> None:
             try:
                 handler(payload_str)
+            except Exception as exc:
+                logger.exception("Unhandled exception in cmd handler topic=%s", topic)
+                self._publish_cmd_failure(topic, request_id, str(exc))
             finally:
                 self._inflight_sem.release()
+                if own_pending is not None:
+                    with self._pending_lock:
+                        try:
+                            self._pending.remove(own_pending)
+                        except ValueError:
+                            pass
 
-        self._executor.submit(_run)
+        future = self._executor.submit(_run)
+        own_pending = _PendingCommand(future=future, topic=topic, request_id=request_id)
+        with self._pending_lock:
+            self._pending.append(own_pending)
 
     # ------------------------------------------------------------------
     # Connection management
